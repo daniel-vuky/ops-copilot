@@ -8,7 +8,7 @@ It is one Go binary on SQLite with an embedded React SPA. See [ADR 0001](docs/de
 
 - **ADRs:** [`docs/decisions/`](docs/decisions/). They are the highest authority in this repository. Plans, tickets, specs and chat instructions do not override them.
 - **UI:** `design/ui/` when present, the visual reference for the SPA (`oc-glass.css`, `colors_and_type.css`). The `.dc.html` templates are references, not production code.
-- **Backlog:** GitHub issues on `daniel-vuky/ops-copilot`, tracked on the user project "Ops Copilot" (#3). `SU-xx` = setup ticket, `UC-xx` = use case.
+- **Backlog:** GitHub issues on `daniel-vuky/ops-copilot`, tracked on the user project [#5 "ops-copilot"](https://github.com/users/daniel-vuky/projects/5). One epic per milestone (label `epic`); tickets are its sub-issues; "Depends on" is mirrored as blocked-by links, and a ticket is Ready when all its blockers are closed. `SU-xx` = setup ticket, `UC-xx` = use case.
 
 ## Rule 1: Always follow the ADRs, never break them
 
@@ -73,16 +73,14 @@ Include the final review's four sections in the PR body.
   ```bash
   gh pr create --base main --assignee daniel-vuky \
     --label enhancement --label area:auth \
-    --project "Ops Copilot" \
     --title "feat(auth): add Google sign-in (UC-01)" --body-file <body.md>
   ```
 
   - **Assignee:** always `daniel-vuky`.
   - **Labels:** exactly one type label plus at least one `area:` label (tables below). Check them with `gh label list` first. If a label from the tables is missing, ask Daniel before creating it.
   - **Linked issues:** one `Closes #N` line per ticket the PR finishes, `Refs #N` for partial work. A PR with no ticket gets the `no-ticket` label.
-  - **Project:** add it to the "Ops Copilot" project.
   - **Body:** Summary, ADRs followed (and any new ADR), Ticket links, Test plan, and the final Fable review (Rule 4).
-- **After creating it**, check with `gh pr view --json assignees,labels,projectItems,body` and fix anything missing.
+- **After creating it**, check with `gh pr view --json assignees,labels,body` and fix anything missing.
 - Tick the ticket's acceptance-criteria checkboxes as they are met.
 - Never merge a PR yourself. Never commit secrets, `.env` files or `.DS_Store`.
 
@@ -107,10 +105,30 @@ Include the final review's four sections in the PR body.
 | `area:delivery` | Toolchain, images, CI, install and updater (0001: 14–15) |
 | `adr` | Adds or changes an ADR (with `documentation`) |
 
+`epic` marks milestone epics only; it never goes on a PR.
+
+### Board flow
+
+| Status | Meaning | How it gets there |
+|---|---|---|
+| Backlog | At least one blocker is open | "Item added to project" workflow |
+| Ready | Every blocker is closed | You, after a merge closes the last blocker, or when picking the next ticket |
+| In progress | A branch exists for it | You, when starting the ticket |
+| In review | A PR with `Closes #N` is open | "Pull request linked to issue" workflow |
+| Done | Issue closed (PR merged into `main`) | "Item closed" workflow |
+
+- A PR for partial work uses `Refs #N`, which creates no link: the ticket stays In progress. Only the PR that finishes it says `Closes #N`.
+- A draft PR with `Closes #N` moves the ticket to In review at once; open a PR as draft only when it really is ready for review, or set the ticket back to In progress.
+- After `gh pr create` for a PR that is ready for review, check the ticket shows In review; if not, set it with `gh project item-edit 5 --owner daniel-vuky --url <issue-url> --field Status --value "In review"`.
+- After a merge, move every ticket whose blockers are now all closed to Ready.
+- An epic moves to In progress when its first ticket starts. Close it when all its sub-issues are closed.
+- "Auto-close issue" stays on: a card dragged to Done is closed too.
+
 ## Other rules
 
 - **Docker first.** Every toolchain (Go, Node/pnpm, linters) runs in the pinned toolchain image through `make` (ADR 0001 §14). Do not install anything on the host (`brew`, `go install`, `npm -g`, `pip`). The host needs only Docker, `make` and `git`. If Docker is not running, ask Daniel to start Docker Desktop.
 - **Language.** Talk to Daniel in Vietnamese. Code, comments, docs, ADRs, commits, issues and PRs are in English.
+- **Public text.** The repository is public: issues, PRs, commits and files must not contain real hostnames, emails, tokens, webhook URLs or customer names.
 - **Verify before claiming.** Run the checks (`make check` once it exists) and read their output before saying something works.
 
 ## Architecture (from ADR 0001)
@@ -143,7 +161,7 @@ The toolchain is not scaffolded yet. When the `Makefile` lands, list its targets
 | Skill | Use it for |
 |---|---|
 | `add-adr` | Every new ADR (Rule 2) |
-| `create-issues`, `update-issues`, `get-board-items` | GitHub issues and the project board (need the MCP servers in `.mcp.json`, or `gh`) |
+| `create-issues`, `update-issues`, `get-board-items` | GitHub issues and the project board (through the `gh` CLI; GitHub's MCP OAuth does not work here, so there is no `.mcp.json`) |
 | `golang-code-style`, `golang-error-handling`, `golang-concurrency`, `golang-testing`, `golang-security` | Writing and reviewing Go code |
 | `multi-stage-dockerfile`, `docker-compose-patterns` | Toolchain image, app images, local compose |
 
