@@ -8,3 +8,8 @@ docs/superpowers/
 # Local env and secrets
 .env*
 !.env.example
+
+# Build outputs
+/bin/
+/web/node_modules/
+/web/dist/
