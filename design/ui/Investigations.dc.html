@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Investigations — Ops Copilot</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/smartoscbmsdesignsystemremix_a0c1fd/colors_and_type.css">
+<link rel="stylesheet" href="oc-glass.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="oc-root">
+<div class="oc-shell">
+  <div class="oc-side-wrap"><dc-import name="Sidebar" active="investigations" mode="{{mode}}" hint-size="100%,900px"></dc-import></div>
+  <main class="oc-main">
+    <dc-import name="Topbar" crumb="Operate" title="Investigations" mode="{{mode}}" hint-size="100%,76px"></dc-import>
+
+    <sc-if value="{{isEmpty}}" hint-placeholder-val="{{false}}">
+      <section class="glass" aria-labelledby="none">
+        <div class="state">
+          <span class="state-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.3-4.3"></path></svg></span>
+          <h2 class="state-title" id="none">No investigations yet</h2>
+          <p class="state-body">An investigation starts when New Relic or Azure Monitor calls a webhook. Add the webhook URLs from Settings to your alert workflows.</p>
+          <a class="btn" href="Settings.dc.html">Open webhook settings</a>
+        </div>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{hasData}}" hint-placeholder-val="{{true}}">
+    <div class="cols-1-2">
+      <section class="glass" aria-labelledby="q">
+        <div class="card-h">
+          <h2 class="card-t" id="q">Queue and history</h2>
+          <nav class="tabs" aria-label="Filter investigations">
+            <a class="tab" href="Investigations.dc.html" aria-current="page">All</a>
+            <a class="tab" href="Investigations.dc.html">Open <span class="mono">2</span></a>
+            <a class="tab" href="Investigations.dc.html">Failed <span class="mono">1</span></a>
+          </nav>
+        </div>
+        <ul class="list" style="list-style: none; margin: 0; padding: 0;">
+          <sc-for list="{{items}}" as="it" hint-placeholder-count="6">
+            <li>
+              <a class="{{it.cls}}" href="Investigations.dc.html" aria-current="{{it.current}}" style="align-items: flex-start;">
+                <span class="{{it.sevCls}}" style="margin-top: 2px;">{{it.sev}}</span>
+                <span class="grow" style="display: flex; flex-direction: column; gap: 4px;">
+                  <span class="strong"><span class="mono">{{it.id}}</span> · {{it.title}}</span>
+                  <span class="small muted">{{it.project}} · <span class="mono">{{it.at}}</span> · {{it.source}}</span>
+                </span>
+                <span class="{{it.stateCls}}">{{it.state}}</span>
+              </a>
+            </li>
+          </sc-for>
+        </ul>
+      </section>
+
+      <div class="stack">
+        <section class="glass glass-strong" aria-labelledby="inv">
+          <div class="card-h">
+            <div style="display: flex; flex-direction: column; gap: 6px; min-width: 0;">
+              <div class="row"><span class="sev sev-high">High</span><span class="{{d.pillCls}}">{{d.pill}}</span><span class="tag">atlas-storefront</span><span class="tag tag-agent">{{modeTag}}</span></div>
+              <h2 class="h2" id="inv"><span class="mono">#42</span> · Error rate above 5% on checkout-api</h2>
+              <span class="small muted">From New Relic workflow “checkout errors” · <span class="mono">27 Nov 2026 09:31</span> ICT · <span class="mono">2</span> more alerts attached</span>
+            </div>
+            <div class="row">
+              <sc-if value="{{d.canStop}}" hint-placeholder-val="{{true}}"><button class="btn btn-sm btn-danger" type="button">Stop</button></sc-if>
+              <sc-if value="{{d.canRerun}}" hint-placeholder-val="{{false}}"><button class="{{d.rerunCls}}" type="button">Run again</button></sc-if>
+              <sc-if value="{{d.canResend}}" hint-placeholder-val="{{false}}"><button class="btn btn-sm" type="button">Resend report</button></sc-if>
+            </div>
+          </div>
+          <div class="card-b" style="display: flex; flex-direction: column; gap: 16px;">
+            <sc-if value="{{d.failed}}" hint-placeholder-val="{{false}}">
+              <div class="banner" role="status"><strong>Failed: time budget reached after <span class="mono">10m 00s</span>.</strong><span class="small">The partial finding below is kept. Run it again, or read the tool calls to continue by hand.</span></div>
+            </sc-if>
+
+            <div class="glass-sunk" style="padding: 14px 16px;">
+              <p class="overline" style="margin: 0 0 6px;">{{d.findingLabel}}</p>
+              <p style="margin: 0;">Errors started at <span class="mono">09:24</span>, two minutes after deploy <span class="mono">a3f9c21</span>. <span class="mono">92%</span> are <span class="mono">TimeoutException</span> from the payment gateway client, whose timeout dropped from <span class="mono">10</span> s to <span class="mono">2</span> s in <span class="mono">config/payment.php</span>. The runbook “Payment gateway timeouts” <a class="cite" href="Knowledge.dc.html">doc 14</a> sets <span class="mono">8</span> s as the floor.</p>
+            </div>
+
+            <sc-if value="{{d.hasFix}}" hint-placeholder-val="{{true}}">
+              <div>
+                <div class="between" style="margin-bottom: 8px;">
+                  <h3 class="sec-h" style="margin: 0;">Suggested fix</h3>
+                  <span class="small muted">A suggestion only. Nothing has been changed.</span>
+                </div>
+                <div class="diff" role="group" aria-label="Suggested change to config/payment.php">
+                  <div class="d-hunk">@@ config/payment.php @@</div>
+                  <div class="d-ctx">  'gateway' =&gt; [</div>
+                  <div class="d-del">-     'timeout' =&gt; 2,</div>
+                  <div class="d-add">+     'timeout' =&gt; 8, // runbook floor, see doc 14</div>
+                  <div class="d-ctx">  ],</div>
+                </div>
+              </div>
+            </sc-if>
+
+            <div>
+              <h3 class="sec-h">Tool calls · <span class="mono">{{d.toolCount}}</span></h3>
+              <ol class="timeline">
+                <sc-for list="{{tools}}" as="t" hint-placeholder-count="5">
+                  <li class="{{t.cls}}">
+                    <span class="mono small muted">{{t.at}}</span>
+                    <span class="tag">{{t.src}}</span>
+                    <span class="mono grow" style="min-width: 200px;">{{t.call}}</span>
+                    <span class="small muted">{{t.result}}</span>
+                  </li>
+                </sc-for>
+              </ol>
+            </div>
+          </div>
+          <div class="card-f">
+            <span class="small muted grow">Budget used</span>
+            <span class="small">Tokens <span class="mono">{{d.tokens}}</span></span>
+            <span class="small">Turns <span class="mono">{{d.turns}}</span></span>
+            <span class="small">Time <span class="mono">{{d.time}}</span></span>
+          </div>
+        </section>
+
+        <section class="glass" aria-labelledby="sent">
+          <div class="card-h"><h2 class="card-t" id="sent">Report delivery</h2></div>
+          <ul class="list" style="list-style: none; margin: 0; padding: 0;">
+            <li class="li"><span class="{{d.mailCls}}">{{d.mail}}</span><span class="grow">Email to the project’s recipients · khoa.le@smartosc.com, linh.pham@smartosc.com</span><span class="small muted mono">{{d.mailAt}}</span></li>
+            <li class="li"><span class="{{d.chatCls}}">{{d.chat}}</span><span class="grow">Google Chat · Ops alerts space</span><span class="small muted mono">{{d.chatAt}}</span></li>
+          </ul>
+        </section>
+      </div>
+    </div>
+    </sc-if>
+  </main>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"view":{"editor":"enum","options":["investigating","reported","failed","empty"],"default":"investigating"},"mode":{"editor":"enum","options":["cli","api"],"default":"cli"},"$preview":{"width":1440,"height":1240}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const mode = this.props.mode ?? 'cli';
+    const view = this.props.view ?? 'investigating';
+    const S = { critical: 'sev sev-critical', high: 'sev sev-high', medium: 'sev sev-medium', low: 'sev sev-low' };
+    const P = { info: 'pill p-info', ok: 'pill p-success', warn: 'pill p-warning', bad: 'pill p-danger', off: 'pill p-neutral' };
+    const STATE = { investigating: ['Investigating', 'info'], reported: ['Reported', 'ok'], failed: ['Failed', 'bad'] };
+    const top = STATE[view] || STATE.investigating;
+    const it = (sel, sev, id, title, project, at, source, state, st) => ({
+      cls: sel ? 'li li-sel' : 'li', current: sel ? 'page' : 'false',
+      sev, sevCls: S[sev], id, title, project, at, source, state, stateCls: P[st]
+    });
+    const t = (at, src, call, result, bad) => ({ at, src, call, result, cls: bad ? 'tool tool-bad' : 'tool' });
+    const tools = [
+      t('09:31:40', 'New Relic', 'nrql: errors by class, last 30 min', '1,284 rows'),
+      t('09:32:05', 'New Relic', 'deployments for checkout-api', 'a3f9c21 at 09:22'),
+      t('09:32:31', 'Company MCP', 'diff a3f9c21^..a3f9c21', '3 files'),
+      t('09:33:02', 'Docs', 'search_docs “payment gateway timeout”', '4 hits'),
+      t('09:33:20', 'Docs', 'get_doc 14 · section 2', '1.2k tokens'),
+      t('09:34:12', 'Company MCP', 'read_file config/payment.php', '2 secrets masked')
+    ];
+    if (view === 'failed') tools.push(t('09:41:40', 'Company MCP', 'read_file config/payment.prod.php', 'stopped: time budget', true));
+    const D = {
+      investigating: { findingLabel: 'Finding so far', hasFix: true, canStop: true, canRerun: false, canResend: false, failed: false,
+        tokens: '41k / 200k', turns: '7 / 30', time: '3m 12s / 10m', mail: 'Waiting', mailCls: P.off, mailAt: 'when done', chat: 'Waiting', chatCls: P.off, chatAt: 'when done' },
+      reported: { findingLabel: 'Finding', hasFix: true, canStop: false, canRerun: true, canResend: true, failed: false, rerunCls: 'btn btn-sm',
+        tokens: '58k / 200k', turns: '11 / 30', time: '4m 40s / 10m', mail: 'Sent', mailCls: P.ok, mailAt: '09:36', chat: 'Sent', chatCls: P.ok, chatAt: '09:36' },
+      failed: { findingLabel: 'Partial finding', hasFix: false, canStop: false, canRerun: true, canResend: true, failed: true, rerunCls: 'btn btn-sm btn-primary',
+        tokens: '133k / 200k', turns: '24 / 30', time: '10m 00s / 10m', mail: 'Sent', mailCls: P.ok, mailAt: '09:42', chat: 'Retrying', chatCls: P.warn, chatAt: '09:42' }
+    };
+    const d = Object.assign({ pill: top[0], pillCls: P[top[1]], toolCount: String(tools.length) }, D[view] || D.investigating);
+    return {
+      mode, d, tools,
+      isEmpty: view === 'empty', hasData: view !== 'empty',
+      modeTag: mode === 'api' ? 'api · claude-opus-5-5' : 'cli · claude-opus-5-5',
+      items: [
+        it(true, 'high', '#42', 'Error rate above 5% on checkout-api', 'atlas-storefront', '27 Nov 2026 09:31', 'New Relic', top[0], top[1]),
+        it(false, 'medium', '#43', 'Slow queries on catalog DB', 'atlas-storefront', '27 Nov 2026 09:40', 'New Relic', 'Queued', 'info'),
+        it(false, 'medium', '#41', 'HTTP 5xx above 50 per minute', 'atlas-storefront', '27 Nov 2026 08:52', 'Azure Monitor', 'Reported', 'ok'),
+        it(false, 'low', '#39', 'Apdex below 0.85', 'nova-payments', '26 Nov 2026 22:14', 'New Relic', 'Reported', 'ok'),
+        it(false, 'medium', '#38', 'Memory above 90% on worker', 'nova-payments', '26 Nov 2026 18:03', 'New Relic', 'Failed', 'bad'),
+        it(false, 'low', '#37', 'Disk above 80% on log volume', 'nova-payments', '25 Nov 2026 07:12', 'Azure Monitor', 'Stopped', 'off'),
+        it(false, 'medium', '#36', 'Queue depth above 5,000 (queue was full)', 'Unassigned', '24 Nov 2026 03:05', 'New Relic', 'Skipped', 'off')
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

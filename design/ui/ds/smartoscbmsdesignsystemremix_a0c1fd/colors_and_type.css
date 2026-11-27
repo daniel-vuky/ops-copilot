@@ -1,0 +1,279 @@
+/* =============================================================
+   SmartOSC BMS — Colors & Type
+   Billing Management System design tokens
+   Style: Modern accounting — clean, dense, trustworthy.
+   ============================================================= */
+
+/* Fonts: Inter (UI) + JetBrains Mono (tabular numerics)
+   Stripe-style accounting pairing — chosen May 2026 */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+
+:root {
+  /* ---------- BRAND ---------- */
+  --brand-blue:        #295CA9;   /* logo blue — primary */
+  --brand-blue-600:    #224F92;
+  --brand-blue-700:    #1B4079;
+  --brand-blue-500:    #295CA9;
+  --brand-blue-400:    #4D7BC2;
+  --brand-blue-300:    #88A6D6;
+  --brand-blue-200:    #C3D2EA;
+  --brand-blue-100:    #E5ECF6;
+  --brand-blue-50:     #F2F6FC;
+
+  --brand-green:       #51B747;   /* logo green — accent */
+  --brand-green-700:   #3D8E36;
+  --brand-green-600:   #45A23E;
+  --brand-green-500:   #51B747;
+  --brand-green-400:   #7AC871;
+  --brand-green-300:   #A6DA9F;
+  --brand-green-200:   #CCEAC8;
+  --brand-green-100:   #E6F4E4;
+  --brand-green-50:    #F3FAF2;
+
+  /* ---------- NEUTRALS (cool slate) ---------- */
+  --slate-950: #0B1220;
+  --slate-900: #11182A;
+  --slate-800: #1C2638;
+  --slate-700: #2B3850;
+  --slate-600: #475569;
+  --slate-500: #64748B;
+  --slate-400: #94A3B8;
+  --slate-300: #CBD5E1;
+  --slate-200: #E2E8F0;
+  --slate-150: #EDF1F6;
+  --slate-100: #F1F5F9;
+  --slate-50:  #F7FAFC;
+  --white:     #FFFFFF;
+
+  /* ---------- SEMANTIC FOREGROUND / SURFACE ---------- */
+  --fg-1:      var(--slate-900);   /* primary text */
+  --fg-2:      var(--slate-700);   /* secondary text */
+  --fg-3:      var(--slate-500);   /* tertiary / labels */
+  --fg-4:      var(--slate-400);   /* placeholder, captions */
+  --fg-on-brand: var(--white);
+
+  --bg-app:    #F4F7FB;            /* app canvas (cool off-white) */
+  --bg-1:      var(--white);       /* primary surface (cards, panels) */
+  --bg-2:      var(--slate-50);    /* sunken surface */
+  --bg-3:      var(--slate-100);   /* hover row, subtle fill */
+  --bg-sidebar: #0F1B33;           /* deep navy — sidebar */
+  --bg-sidebar-hover: #1A2A4A;
+
+  --border-1:  var(--slate-200);   /* default border */
+  --border-2:  var(--slate-150);   /* subtle divider */
+  --border-strong: var(--slate-300);
+  --border-focus: var(--brand-blue);
+
+  /* ---------- STATUS (workflow states) ----------
+     Used heavily in Invoice, Payment, Aging modules.
+     Each role has solid + soft variants. */
+  --success:        #16A34A;       /* paid, completed */
+  --success-soft:   #E6F7EC;
+  --success-fg:     #15803D;
+
+  --warning:        #D97706;       /* pending, awaiting action */
+  --warning-soft:   #FEF3C7;
+  --warning-fg:     #B45309;
+
+  --danger:         #DC2626;       /* overdue, error, rejected */
+  --danger-soft:    #FEE2E2;
+  --danger-fg:      #B91C1C;
+
+  --info:           var(--brand-blue);   /* issued, in-progress */
+  --info-soft:      var(--brand-blue-100);
+  --info-fg:        var(--brand-blue-700);
+
+  --neutral-soft:   var(--slate-100);    /* draft, archived */
+  --neutral-fg:     var(--slate-600);
+
+  /* ---------- AGING BUCKETS (Accounts Receivable) ---------- */
+  --aging-current:    #16A34A;     /* 0 days */
+  --aging-1-30:       #84CC16;     /* 1–30 days */
+  --aging-31-60:      #EAB308;     /* 31–60 days */
+  --aging-61-90:      #F97316;     /* 61–90 days */
+  --aging-90-plus:    #DC2626;     /* 90+ days */
+
+  /* ---------- DATA-VIZ (charts, dashboards) ----------
+     Ordered so adjacent slices contrast. */
+  --chart-1: #295CA9;   /* brand blue */
+  --chart-2: #51B747;   /* brand green */
+  --chart-3: #F59E0B;   /* amber */
+  --chart-4: #8B5CF6;   /* violet */
+  --chart-5: #06B6D4;   /* cyan */
+  --chart-6: #EC4899;   /* pink */
+  --chart-7: #14B8A6;   /* teal */
+  --chart-8: #64748B;   /* slate */
+
+  /* ---------- TYPE ---------- */
+  --font-sans: "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* For any number / currency / ID — always tabular */
+  --font-num:  "JetBrains Mono", ui-monospace, monospace;
+
+  /* Type scale (px → rem). Tight for accounting density. */
+  --text-xs:   12px;   /* table meta, captions */
+  --text-sm:   13px;   /* table cell, body small */
+  --text-base: 14px;   /* default body */
+  --text-md:   15px;
+  --text-lg:   17px;   /* card titles */
+  --text-xl:   20px;   /* section titles */
+  --text-2xl:  24px;   /* page titles */
+  --text-3xl:  30px;   /* dashboard KPI */
+  --text-4xl:  36px;   /* large stat */
+  --text-5xl:  48px;
+
+  --lh-tight: 1.2; /* @kind font */
+  --lh-snug:  1.35; /* @kind font */
+  --lh-base:  1.5; /* @kind font */
+  --lh-relaxed: 1.65; /* @kind font */
+
+  --fw-regular: 400; /* @kind font */
+  --fw-medium:  500; /* @kind font */
+  --fw-semibold: 600; /* @kind font */
+  --fw-bold:    700; /* @kind font */
+  --fw-extrabold: 800; /* @kind font */
+
+  /* ---------- SPACING (4px grid) ---------- */
+  --space-0:  0;
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* ---------- RADII ---------- */
+  --radius-xs:  3px;
+  --radius-sm:  5px;
+  --radius:     8px;     /* default */
+  --radius-md:  10px;
+  --radius-lg:  14px;    /* cards */
+  --radius-xl:  20px;
+  --radius-pill: 999px;
+
+  /* ---------- ELEVATION ---------- */
+  --shadow-xs: 0 1px 2px rgba(15, 27, 51, 0.04);
+  --shadow-sm: 0 1px 2px rgba(15, 27, 51, 0.06), 0 1px 3px rgba(15, 27, 51, 0.04);
+  --shadow:    0 2px 4px rgba(15, 27, 51, 0.06), 0 4px 12px rgba(15, 27, 51, 0.05);
+  --shadow-md: 0 4px 8px rgba(15, 27, 51, 0.07), 0 8px 24px rgba(15, 27, 51, 0.06);
+  --shadow-lg: 0 8px 16px rgba(15, 27, 51, 0.08), 0 24px 48px rgba(15, 27, 51, 0.10);
+  --shadow-focus: 0 0 0 3px rgba(41, 92, 169, 0.18);
+  --shadow-focus-green: 0 0 0 3px rgba(81, 183, 71, 0.22);
+
+  /* ---------- MOTION ---------- */
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1); /* @kind other */
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1); /* @kind other */
+  --dur-fast:   120ms; /* @kind other */
+  --dur-base:   200ms; /* @kind other */
+  --dur-slow:   320ms; /* @kind other */
+}
+
+/* =============================================================
+   Semantic element styles — apply these classes directly.
+   ============================================================= */
+
+.h-display {
+  font-family: var(--font-sans);
+  font-weight: var(--fw-extrabold);
+  font-size: var(--text-4xl);
+  line-height: var(--lh-tight);
+  letter-spacing: -0.02em;
+  color: var(--fg-1);
+}
+.h1 {
+  font-family: var(--font-sans);
+  font-weight: var(--fw-bold);
+  font-size: var(--text-2xl);
+  line-height: var(--lh-tight);
+  letter-spacing: -0.015em;
+  color: var(--fg-1);
+}
+.h2 {
+  font-family: var(--font-sans);
+  font-weight: var(--fw-semibold);
+  font-size: var(--text-xl);
+  line-height: var(--lh-snug);
+  letter-spacing: -0.01em;
+  color: var(--fg-1);
+}
+.h3 {
+  font-family: var(--font-sans);
+  font-weight: var(--fw-semibold);
+  font-size: var(--text-lg);
+  line-height: var(--lh-snug);
+  color: var(--fg-1);
+}
+.h4 {
+  font-family: var(--font-sans);
+  font-weight: var(--fw-semibold);
+  font-size: var(--text-base);
+  line-height: var(--lh-snug);
+  color: var(--fg-1);
+}
+.body {
+  font-family: var(--font-sans);
+  font-weight: var(--fw-regular);
+  font-size: var(--text-base);
+  line-height: var(--lh-base);
+  color: var(--fg-2);
+}
+.body-sm {
+  font-family: var(--font-sans);
+  font-weight: var(--fw-regular);
+  font-size: var(--text-sm);
+  line-height: var(--lh-base);
+  color: var(--fg-2);
+}
+.caption {
+  font-family: var(--font-sans);
+  font-weight: var(--fw-medium);
+  font-size: var(--text-xs);
+  line-height: var(--lh-snug);
+  color: var(--fg-3);
+  letter-spacing: 0.01em;
+}
+.label-overline {
+  font-family: var(--font-sans);
+  font-weight: var(--fw-semibold);
+  font-size: 11px;
+  line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-3);
+}
+/* Use .num for any tabular number — totals, balances, dates, IDs */
+.num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  letter-spacing: -0.01em;
+}
+/* Currency symbol — muted + smaller next to a value, lets the number lead */
+.sym {
+  font-family: var(--font-num);
+  font-weight: 500;
+  color: var(--fg-3);
+  margin-right: 0.35em;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.code, code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--bg-3);
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  color: var(--fg-1);
+}
+
+/* Reset-ish base */
+html, body {
+  font-family: var(--font-sans);
+  color: var(--fg-1);
+  background: var(--bg-app);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

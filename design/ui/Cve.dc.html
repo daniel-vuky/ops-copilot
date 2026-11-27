@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CVE — Ops Copilot</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/smartoscbmsdesignsystemremix_a0c1fd/colors_and_type.css">
+<link rel="stylesheet" href="oc-glass.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="oc-root">
+<div class="oc-shell">
+  <div class="oc-side-wrap"><dc-import name="Sidebar" active="cve" mode="{{mode}}" hint-size="100%,900px"></dc-import></div>
+  <main class="oc-main">
+    <dc-import name="Topbar" crumb="Operate" title="CVE" mode="{{mode}}" hint-size="100%,76px"></dc-import>
+
+    <div class="glass" style="padding: 14px 18px;">
+      <div class="between">
+        <div class="row">
+          <span class="pill p-success">Scanned</span>
+          <span>Last OSV scan <span class="mono">27 Nov 2026 06:00</span> · next <span class="mono">28 Nov 2026 06:00</span></span>
+          <span class="muted small"><span class="mono">2</span> projects · <span class="mono">612</span> packages</span>
+        </div>
+        <div class="row">
+          <a class="btn btn-sm" href="Projects.dc.html">Edit stacks</a>
+          <button class="btn btn-sm btn-primary" type="button">Scan now</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="notice" role="note"><strong>2 entries are not scanned.</strong><span class="small">nginx and php on atlas-storefront are outside the ecosystems OSV covers (npm, Packagist, Go, PyPI). They stay listed in Projects for reference.</span></div>
+
+    <div class="kpis">
+      <div class="glass kpi"><span class="overline">Critical</span><span class="kpi-v">0</span><span class="small muted">open</span></div>
+      <div class="glass kpi glass-tint-red"><span class="overline">High</span><span class="kpi-v bad-fg">2</span><span class="small muted">open · <span class="mono">2</span> new</span></div>
+      <div class="glass kpi glass-tint-amber"><span class="overline">Medium</span><span class="kpi-v warn-fg">2</span><span class="small muted">open</span></div>
+      <div class="glass kpi"><span class="overline">Low</span><span class="kpi-v">1</span><span class="small muted">open · <span class="mono">1</span> ignored</span></div>
+    </div>
+
+    <section class="glass" aria-labelledby="f">
+      <div class="card-h">
+        <h2 class="card-t" id="f">Findings</h2>
+        <div class="row">
+          <nav class="tabs" aria-label="Filter by state">
+            <a class="tab" href="Cve.dc.html" aria-current="page">Open <span class="mono">5</span></a>
+            <a class="tab" href="Cve.dc.html">New <span class="mono">2</span></a>
+            <a class="tab" href="Cve.dc.html">Ignored <span class="mono">1</span></a>
+          </nav>
+          <label class="field" style="flex-direction: row; align-items: center; gap: 8px;">
+            <span>Project</span>
+            <select class="select" style="width: 180px;"><option>All projects</option><option>atlas-storefront</option><option>nova-payments</option></select>
+          </label>
+        </div>
+      </div>
+      <div class="scroll-x">
+        <table class="tbl">
+          <thead><tr><th scope="col">Severity</th><th scope="col">Advisory</th><th scope="col">Package</th><th scope="col">Installed</th><th scope="col">Fixed in</th><th scope="col">Project and source</th><th scope="col">First seen</th><th scope="col">State</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
+          <tbody>
+            <sc-for list="{{rows}}" as="r" hint-placeholder-count="6">
+              <tr>
+                <td><span class="{{r.sevCls}}">{{r.sev}}</span></td>
+                <td><a class="link mono small" href="{{r.url}}">{{r.id}}</a><div class="small muted">{{r.summary}}</div></td>
+                <td><span class="mono small">{{r.pkg}}</span><div class="small muted">{{r.eco}}</div></td>
+                <td class="mono small">{{r.ver}}<sc-if value="{{r.range}}" hint-placeholder-val="{{false}}"><div class="small warn-fg" style="font-family: var(--font-sans);">From a range</div></sc-if></td>
+                <td class="mono small">{{r.fix}}</td>
+                <td><span class="tag">{{r.project}}</span><div class="small muted">{{r.source}}</div></td>
+                <td class="mono small">{{r.seen}}</td>
+                <td><span class="{{r.stateCls}}">{{r.state}}</span></td>
+                <td class="r"><button class="btn btn-sm btn-ghost" type="button" aria-label="{{r.actLabel}}">{{r.act}}</button></td>
+              </tr>
+            </sc-for>
+          </tbody>
+        </table>
+      </div>
+      <div class="card-f"><span class="small muted">Ignoring a finding asks for a reason. Ignored findings stay out of reports until you reopen them.</span></div>
+    </section>
+  </main>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"mode":{"editor":"enum","options":["cli","api"],"default":"cli"},"$preview":{"width":1440,"height":1100}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const S = { critical: 'sev sev-critical', high: 'sev sev-high', medium: 'sev sev-medium', low: 'sev sev-low' };
+    const P = { new: 'pill p-warning', open: 'pill p-info', ignored: 'pill p-neutral' };
+    const r = (sev, id, summary, pkg, eco, ver, range, fix, project, source, seen, st) => ({
+      sev, sevCls: S[sev], id, summary, pkg, eco, ver, range, fix, project, source, seen,
+      url: 'https://osv.dev/vulnerability/' + id,
+      state: st === 'new' ? 'New' : st === 'open' ? 'Open' : 'Ignored', stateCls: P[st],
+      act: st === 'ignored' ? 'Reopen' : 'Ignore', actLabel: (st === 'ignored' ? 'Reopen ' : 'Ignore ') + id
+    });
+    return {
+      mode: this.props.mode ?? 'cli',
+      rows: [
+        r('high', 'CVE-2026-31842', 'Header injection in redirects', 'guzzlehttp/guzzle', 'Packagist', '7.8.1', false, '7.9.2', 'atlas-storefront', 'composer.lock', '27 Nov 2026', 'new'),
+        r('high', 'CVE-2026-29910', 'SSRF through absolute URLs', 'axios', 'npm', '1.7.2', false, '1.7.9', 'nova-payments', 'package-lock.json', '27 Nov 2026', 'new'),
+        r('medium', 'GHSA-4x6r-9c2m-77qp', 'ReDoS in path matching', 'path-to-regexp', 'npm', '0.1.7', false, '0.1.12', 'nova-payments', 'package-lock.json', '19 Nov 2026', 'open'),
+        r('medium', 'CVE-2026-20417', 'XSS in admin grid filter', 'magento/product-community-edition', 'Packagist', '2.4.6', false, '2.4.6-p9', 'atlas-storefront', 'entered by hand', '12 Nov 2026', 'open'),
+        r('low', 'GHSA-7fh5-64p2-3v2j', 'Prototype pollution in parser', 'qs', 'npm', '6.11.0', true, '6.11.3', 'nova-payments', 'package.json', '29 Oct 2026', 'open'),
+        r('low', 'CVE-2026-11290', 'Timing leak in compare', 'phpseclib/phpseclib', 'Packagist', '3.0.36', false, '3.0.42', 'atlas-storefront', 'composer.lock', '21 Oct 2026', 'ignored')
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

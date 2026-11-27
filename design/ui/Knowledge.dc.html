@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Knowledge — Ops Copilot</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/smartoscbmsdesignsystemremix_a0c1fd/colors_and_type.css">
+<link rel="stylesheet" href="oc-glass.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="oc-root">
+<div class="oc-shell">
+  <div class="oc-side-wrap"><dc-import name="Sidebar" active="knowledge" mode="{{mode}}" hint-size="100%,900px"></dc-import></div>
+  <main class="oc-main">
+    <dc-import name="Topbar" crumb="Operate" title="Knowledge" mode="{{mode}}" hint-size="100%,76px"></dc-import>
+
+    <div class="cols-1-1">
+      <section class="glass" aria-labelledby="up">
+        <div class="card-h"><h2 class="card-t" id="up">Add documents</h2><span class="small muted"><span class="mono">74</span> MB of <span class="mono">200</span> MB used</span></div>
+        <div class="card-b" style="display: flex; flex-direction: column; gap: 12px;">
+          <label class="drop">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#295CA9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"></path></svg>
+            <span class="strong">Drop files here or choose files</span>
+            <span class="small muted">Markdown, PDF, DOCX, draw.io · up to <span class="mono">20</span> MB each</span>
+            <input type="file" multiple accept=".md,.pdf,.docx,.drawio" class="sr">
+          </label>
+          <p class="small muted" style="margin: 0;">Text is extracted on the server and indexed for keyword search. A scanned PDF has no text to extract and is marked “No text”. The library is shared by everyone on the team.</p>
+        </div>
+      </section>
+
+      <section class="glass" aria-labelledby="mcp">
+        <div class="card-h"><h2 class="card-t" id="mcp">Use from Claude</h2><span class="pill p-success">Online</span></div>
+        <div class="card-b" style="display: flex; flex-direction: column; gap: 10px;">
+          <p style="margin: 0;" class="small">Claude Code and claude.ai sign in with Google and ask for your consent. They can search and read these documents with <span class="mono">search_docs</span> and <span class="mono">get_doc</span>, and nothing else.</p>
+          <pre class="code-block">claude mcp add --transport http ops-copilot \
+  https://[PUBLIC_URL]/mcp</pre>
+          <a class="link small" href="Settings.dc.html">Manage your connections and API keys</a>
+        </div>
+      </section>
+    </div>
+
+    <section class="glass" aria-labelledby="try">
+      <div class="card-h">
+        <h2 class="card-t" id="try">Try a search</h2>
+        <form class="search" role="search" aria-label="Try a document search" style="width: 420px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.3-4.3"></path></svg>
+          <input type="search" aria-label="Search documents" value="payment gateway timeout">
+        </form>
+      </div>
+      <ol class="list" style="list-style: none; margin: 0; padding: 0;">
+        <li class="li" style="align-items: flex-start;">
+          <span class="cite" style="margin-top: 2px;">doc 14</span>
+          <div class="grow"><a class="link" href="Knowledge.dc.html">Payment gateway runbook.md · 2. Timeouts</a><div class="small muted">…keep the <mark class="hl">gateway</mark> client <mark class="hl">timeout</mark> at 8 s or more; under load the <mark class="hl">payment</mark> provider answers in 3–6 s…</div></div>
+          <span class="mono small muted">score 11.4</span>
+        </li>
+        <li class="li" style="align-items: flex-start;">
+          <span class="cite" style="margin-top: 2px;">doc 31</span>
+          <div class="grow"><a class="link" href="Knowledge.dc.html">Checkout architecture.drawio · page “Payments”</a><div class="small muted">checkout-api → <mark class="hl">payment</mark>-<mark class="hl">gateway</mark> (HTTPS, <mark class="hl">timeout</mark> 8 s) → provider</div></div>
+          <span class="mono small muted">score 8.9</span>
+        </li>
+        <li class="li" style="align-items: flex-start;">
+          <span class="cite" style="margin-top: 2px;">doc 7</span>
+          <div class="grow"><a class="link" href="Knowledge.dc.html">Incident 2026-08 postmortem.pdf · page 3</a><div class="small muted">…the <mark class="hl">timeout</mark> was lowered during a refactor and nobody tied it to the <mark class="hl">gateway</mark> SLA…</div></div>
+          <span class="mono small muted">score 6.2</span>
+        </li>
+      </ol>
+    </section>
+
+    <section class="glass" aria-labelledby="docs">
+      <div class="card-h">
+        <h2 class="card-t" id="docs">Documents · <span class="mono">128</span></h2>
+        <nav class="tabs" aria-label="Filter documents">
+          <a class="tab" href="Knowledge.dc.html" aria-current="page">All</a>
+          <a class="tab" href="Knowledge.dc.html">No text <span class="mono">3</span></a>
+          <a class="tab" href="Knowledge.dc.html">Failed <span class="mono">0</span></a>
+        </nav>
+      </div>
+      <div class="scroll-x">
+        <table class="tbl">
+          <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col" class="r">Size</th><th scope="col" class="r">Chunks</th><th scope="col">State</th><th scope="col">Uploaded</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
+          <tbody>
+            <sc-for list="{{docs}}" as="d" hint-placeholder-count="6">
+              <tr>
+                <td><a class="link" href="Knowledge.dc.html">{{d.name}}</a><div class="small muted mono">{{d.ref}}</div></td>
+                <td><span class="tag">{{d.type}}</span></td>
+                <td class="r mono small">{{d.size}}</td>
+                <td class="r mono small">{{d.chunks}}</td>
+                <td><span class="{{d.stateCls}}">{{d.state}}</span></td>
+                <td class="small"><span class="mono">{{d.date}}</span><div class="muted">{{d.by}}</div></td>
+                <td class="r" style="white-space: nowrap;"><button class="btn btn-sm btn-ghost" type="button" aria-label="{{d.repLabel}}">Replace</button><button class="btn btn-sm btn-ghost" type="button" aria-label="{{d.delLabel}}">Delete</button></td>
+              </tr>
+            </sc-for>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"mode":{"editor":"enum","options":["cli","api"],"default":"cli"},"$preview":{"width":1440,"height":1180}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const P = { ok: 'pill p-success', run: 'pill p-info', none: 'pill p-warning' };
+    const d = (ref, name, type, size, chunks, st, state, date, by) => ({
+      ref, name, type, size, chunks, stateCls: P[st], state, date, by,
+      repLabel: 'Replace ' + name, delLabel: 'Delete ' + name
+    });
+    return {
+      mode: this.props.mode ?? 'cli',
+      docs: [
+        d('doc 14', 'Payment gateway runbook.md', 'Markdown', '18 KB', '12', 'ok', 'Indexed', '27 Nov 2026', 'Khoa Le'),
+        d('doc 31', 'Checkout architecture.drawio', 'draw.io', '240 KB', '6', 'ok', 'Indexed', '26 Nov 2026', 'Khoa Le'),
+        d('doc 52', 'Release checklist.docx', 'DOCX', '96 KB', '—', 'run', 'Extracting', '27 Nov 2026', 'Linh Pham'),
+        d('doc 7', 'Incident 2026-08 postmortem.pdf', 'PDF', '1.4 MB', '21', 'ok', 'Indexed', '02 Sep 2026', 'Khoa Le'),
+        d('doc 5', 'Vendor SLA scan.pdf', 'PDF', '6.8 MB', '—', 'none', 'No text', '14 Aug 2026', 'Minh Tran'),
+        d('doc 3', 'On-call handbook.md', 'Markdown', '42 KB', '28', 'ok', 'Indexed', '30 Jul 2026', 'Khoa Le')
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

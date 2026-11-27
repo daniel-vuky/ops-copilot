@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ops Copilot sidebar</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/smartoscbmsdesignsystemremix_a0c1fd/colors_and_type.css">
+<link rel="stylesheet" href="oc-glass.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<nav class="glass-dark" aria-label="Main navigation" style="font-family: var(--font-sans, Inter), system-ui, sans-serif; width: 100%; padding: 16px 12px; display: flex; flex-direction: column; gap: 2px;">
+  <div style="display: flex; align-items: center; gap: 10px; padding: 4px 8px 14px;">
+    <span aria-hidden="true" style="position: relative; width: 30px; height: 30px; flex: none;">
+      <span style="position: absolute; left: 0; top: 0; width: 20px; height: 20px; border-radius: 7px; background: linear-gradient(135deg, #4D7BC2, #295CA9); box-shadow: inset 0 1px 0 rgba(255,255,255,0.4);"></span>
+      <span style="position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; border-radius: 7px; background: linear-gradient(135deg, rgba(122,200,113,0.95), rgba(69,162,62,0.9)); box-shadow: inset 0 1px 0 rgba(255,255,255,0.45);"></span>
+    </span>
+    <div style="display: flex; flex-direction: column; line-height: 1.2; flex: 1 1 auto;">
+      <span style="font-size: 15px; font-weight: 700; color: #FFFFFF; letter-spacing: -0.01em;">Ops Copilot</span>
+      <span style="font-size: 12px; color: #A5B4CF;">SmartOSC internal</span>
+    </div>
+    <button class="btn btn-sm nav-burger" type="button" aria-expanded="{{navOpenStr}}" aria-controls="oc-nav-list" onClick="{{toggleNav}}" style="background: rgba(255,255,255,0.1); color: #FFFFFF; border-color: rgba(255,255,255,0.35);">Menu</button>
+  </div>
+
+  <div class="{{listCls}}" id="oc-nav-list">
+    <sc-for list="{{groups}}" as="g" hint-placeholder-count="2">
+      <p class="nav-sec">{{g.head}}</p>
+      <ul class="nav-ul">
+        <sc-for list="{{g.items}}" as="it" hint-placeholder-count="3">
+          <li>
+            <sc-if value="{{it.isOn}}" hint-placeholder-val="{{false}}">
+              <a class="nav-a nav-on" href="{{it.href}}" aria-current="page">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{it.icon}}"></path></svg>
+                <span>{{it.label}}</span>
+                <sc-if value="{{it.hasBadge}}" hint-placeholder-val="{{false}}"><span class="{{it.badgeCls}}"><span aria-hidden="true">{{it.badge}}</span><span class="sr">{{it.badgeLabel}}</span></span></sc-if>
+              </a>
+            </sc-if>
+            <sc-if value="{{it.isOff}}" hint-placeholder-val="{{true}}">
+              <a class="nav-a" href="{{it.href}}">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{it.icon}}"></path></svg>
+                <span>{{it.label}}</span>
+                <sc-if value="{{it.hasBadge}}" hint-placeholder-val="{{false}}"><span class="{{it.badgeCls}}"><span aria-hidden="true">{{it.badge}}</span><span class="sr">{{it.badgeLabel}}</span></span></sc-if>
+              </a>
+            </sc-if>
+          </li>
+        </sc-for>
+      </ul>
+    </sc-for>
+
+    <div style="margin-top: 14px; padding: 12px; border-radius: 14px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); display: flex; flex-direction: column; gap: 8px; font-size: 12px;">
+      <p class="nav-sec" style="padding: 0 0 2px;">System</p>
+      <div style="display: flex; align-items: center; gap: 8px;"><span class="dot dot-ok" aria-hidden="true"></span><span style="color: #DCE5F3;">Investigator</span><span style="margin-left: auto; color: #C9D5EA;">Ready · <span class="mono">{{mode}}</span></span></div>
+      <div style="display: flex; align-items: center; gap: 8px;"><span class="dot dot-ok" aria-hidden="true"></span><span style="color: #DCE5F3;">Scheduler</span><span style="margin-left: auto; color: #C9D5EA;">Running · <span class="mono">09:38</span></span></div>
+      <div style="display: flex; align-items: center; gap: 8px;"><span class="dot dot-ok" aria-hidden="true"></span><span style="color: #DCE5F3;">Company MCP</span><span style="margin-left: auto; color: #C9D5EA;">Reachable</span></div>
+      <div style="display: flex; align-items: center; gap: 8px;"><span class="dot dot-ok" aria-hidden="true"></span><span style="color: #DCE5F3;">Secret filter</span><span style="margin-left: auto; color: #C9D5EA;">On</span></div>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 10px; padding: 10px 8px; margin-top: 6px;">
+      <span class="avatar" aria-hidden="true">KL</span>
+      <span style="display: flex; flex-direction: column; line-height: 1.25; min-width: 0; flex: 1 1 auto;">
+        <span style="font-size: 13px; font-weight: 600; color: #FFFFFF;">Khoa Le</span>
+        <span style="font-size: 12px; color: #A5B4CF;">{{role}}</span>
+      </span>
+      <form method="post" action="SignIn.dc.html" style="margin: 0;"><button class="linkbtn" type="submit" style="font-size: 12px; color: #C9D5EA;">Sign out</button></form>
+    </div>
+  </div>
+</nav>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"active":{"editor":"enum","options":["dashboard","investigations","cve","knowledge","projects","settings","none"],"default":"dashboard"},"mode":{"editor":"enum","options":["cli","api"],"default":"cli"},"admin":{"editor":"boolean","default":true},"$preview":{"width":272,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { navOpen: false }; }
+  renderVals() {
+    const active = this.props.active ?? 'dashboard';
+    const I = {
+      dashboard: 'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z',
+      investigations: 'M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.3-4.3',
+      cve: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM12 8v4M12 16h.01',
+      knowledge: 'M2 4h7a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H2zM22 4h-7a3 3 0 0 0-3 3v13a2 2 0 0 1 2-2h8z',
+      projects: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
+      settings: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6'
+    };
+    const BADGES = { investigations: ['1', false, 'investigating'], cve: ['2', true, 'new high findings'] };
+    const DEF = [
+      ['Operate', [['dashboard', 'Dashboard', 'Main.dc.html'], ['investigations', 'Investigations', 'Investigations.dc.html'], ['cve', 'CVE', 'Cve.dc.html'], ['knowledge', 'Knowledge', 'Knowledge.dc.html']]],
+      ['Configure', [['projects', 'Projects', 'Projects.dc.html'], ['settings', 'Settings', 'Settings.dc.html']]]
+    ];
+    const groups = DEF.map(([head, list]) => ({
+      head,
+      items: list.map((r) => {
+        const on = r[0] === active;
+        const b = BADGES[r[0]];
+        return {
+          isOn: on, isOff: !on, label: r[1], href: r[2], icon: I[r[0]],
+          hasBadge: !!b, badge: b ? b[0] : '',
+          badgeCls: b && b[1] ? 'nav-badge nav-badge-urgent' : 'nav-badge',
+          badgeLabel: b ? ', ' + b[0] + ' ' + b[2] : ''
+        };
+      })
+    }));
+    const open = this.state.navOpen;
+    return {
+      groups,
+      navOpenStr: open ? 'true' : 'false',
+      listCls: open ? 'nav-list nav-open' : 'nav-list',
+      toggleNav: () => this.setState({ navOpen: !open }),
+      mode: this.props.mode ?? 'cli',
+      role: (this.props.admin ?? true) ? 'Admin' : 'Member'
+    };
+  }
+}
+</script>
+</body>
+</html>

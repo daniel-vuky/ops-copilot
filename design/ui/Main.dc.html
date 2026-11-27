@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dashboard — Ops Copilot</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/smartoscbmsdesignsystemremix_a0c1fd/colors_and_type.css">
+<link rel="stylesheet" href="oc-glass.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="oc-root">
+<div class="oc-shell">
+  <div class="oc-side-wrap"><dc-import name="Sidebar" active="dashboard" mode="{{mode}}" hint-size="100%,900px"></dc-import></div>
+  <main class="oc-main">
+    <dc-import name="Topbar" crumb="Operate" title="Dashboard" mode="{{mode}}" hint-size="100%,76px"></dc-import>
+
+    <div class="kpis">
+      <a class="glass kpi" href="Investigations.dc.html">
+        <span class="overline">Alerts · last 24 h</span>
+        <span class="kpi-v">4</span>
+        <span class="small muted"><span class="mono">3</span> New Relic · <span class="mono">1</span> Azure Monitor</span>
+      </a>
+      <a class="glass kpi" href="Investigations.dc.html">
+        <span class="overline">Investigating</span>
+        <span class="kpi-v">1<span class="kpi-u">+<span class="mono">1</span> queued</span></span>
+        <span class="small muted">At most <span class="mono">2</span> at a time</span>
+      </a>
+      <a class="glass kpi glass-tint-red" href="Cve.dc.html">
+        <span class="overline">New CVEs</span>
+        <span class="kpi-v bad-fg">2<span class="kpi-u">high</span></span>
+        <span class="small muted">Scanned <span class="mono">27 Nov 2026 06:00</span></span>
+      </a>
+      <a class="glass kpi" href="Knowledge.dc.html">
+        <span class="overline">Documents</span>
+        <span class="kpi-v">128</span>
+        <span class="small muted"><span class="mono">74</span> MB · <span class="mono">3</span> without text</span>
+      </a>
+    </div>
+
+    <div class="cols-2-1">
+      <section class="glass" aria-labelledby="act">
+        <div class="card-h">
+          <h2 class="card-t" id="act">Recent activity</h2>
+          <div class="tabs" role="group" aria-label="Filter activity">
+            <button class="tab" type="button" aria-pressed="true">All</button>
+            <button class="tab" type="button" aria-pressed="false">Alerts</button>
+            <button class="tab" type="button" aria-pressed="false">CVE</button>
+          </div>
+        </div>
+        <div class="scroll-x">
+          <table class="tbl">
+            <thead><tr><th scope="col">Time</th><th scope="col">Severity</th><th scope="col">Event</th><th scope="col">Project</th><th scope="col">State</th></tr></thead>
+            <tbody>
+              <sc-for list="{{events}}" as="e" hint-placeholder-count="6">
+                <tr>
+                  <td class="mono small" style="white-space: nowrap;">{{e.time}}</td>
+                  <td><span class="{{e.sevCls}}">{{e.sev}}</span></td>
+                  <td>
+                    <a class="link" href="{{e.href}}">{{e.title}}</a>
+                    <div class="small muted">{{e.source}}</div>
+                  </td>
+                  <td><span class="tag">{{e.project}}</span></td>
+                  <td><span class="{{e.stateCls}}">{{e.state}}</span><div class="small muted">{{e.note}}</div></td>
+                </tr>
+              </sc-for>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <div class="stack">
+        <section class="glass glass-tint-blue" aria-labelledby="run">
+          <div class="card-h">
+            <h2 class="card-t" id="run">Investigating now</h2>
+            <span class="pill p-info">Investigating</span>
+          </div>
+          <div class="card-b" style="display: flex; flex-direction: column; gap: 12px;">
+            <div>
+              <a class="link" href="Investigations.dc.html"><span class="mono">#42</span> · Error rate above 5% on checkout-api</a>
+              <div class="small muted">Started <span class="mono">09:31</span> · turn <span class="mono">7</span> of <span class="mono">30</span></div>
+            </div>
+            <div class="field">
+              <span class="between small"><span>Tokens</span><span class="mono">41k / 200k</span></span>
+              <div class="bar" role="img" aria-label="21% of the token budget used"><span style="width: 21%;"></span></div>
+            </div>
+            <div class="field">
+              <span class="between small"><span>Time</span><span class="mono">3m 12s / 10m</span></span>
+              <div class="bar" role="img" aria-label="32% of the time budget used"><span style="width: 32%;"></span></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="glass" aria-labelledby="health">
+          <div class="card-h"><h2 class="card-t" id="health">Inputs and outputs</h2></div>
+          <ul class="list" style="list-style: none; margin: 0; padding: 0;">
+            <li class="li"><span class="grow">New Relic webhook</span><span class="pill p-success">Receiving</span><span class="mono small muted">09:31</span></li>
+            <li class="li"><span class="grow">Azure Monitor webhook</span><span class="pill p-success">Receiving</span><span class="mono small muted">08:52</span></li>
+            <li class="li"><span class="grow">OSV daily scan</span><span class="pill p-success">Done</span><span class="mono small muted">06:00</span></li>
+            <li class="li"><span class="grow">Email (SMTP)</span><span class="pill p-success">Sent</span><span class="mono small muted">08:58</span></li>
+            <li class="li"><span class="grow">Google Chat<div class="small muted">Last post failed, retried once</div></span><span class="pill p-warning">Retrying</span><span class="mono small muted">08:58</span></li>
+          </ul>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"mode":{"editor":"enum","options":["cli","api"],"default":"cli"},"$preview":{"width":1440,"height":1180}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const S = { critical: 'sev sev-critical', high: 'sev sev-high', medium: 'sev sev-medium', low: 'sev sev-low' };
+    const P = { info: 'pill p-info', ok: 'pill p-success', warn: 'pill p-warning', bad: 'pill p-danger', off: 'pill p-neutral' };
+    const row = (time, sev, title, source, project, state, st, note, href) => ({
+      time, sev, sevCls: S[sev], title, source, project, state, stateCls: P[st], note, href
+    });
+    return {
+      mode: this.props.mode ?? 'cli',
+      events: [
+        row('27 Nov 2026 09:31', 'high', '#42 · Error rate above 5% for 5 min', 'New Relic · checkout-api', 'atlas-storefront', 'Investigating', 'info', 'Turn 7 of 30', 'Investigations.dc.html'),
+        row('27 Nov 2026 08:52', 'medium', '#41 · HTTP 5xx above 50 per minute', 'Azure Monitor · app-atlas-prod', 'atlas-storefront', 'Reported', 'ok', 'Fix suggested, sent 08:58', 'Investigations.dc.html'),
+        row('27 Nov 2026 08:10', 'high', 'CVE-2026-31842 in guzzlehttp/guzzle 7.8.1', 'OSV · composer.lock', 'atlas-storefront', 'New', 'warn', 'Fixed in 7.9.2', 'Cve.dc.html'),
+        row('27 Nov 2026 07:45', 'high', 'CVE-2026-29910 in axios 1.7.2', 'OSV · package-lock.json', 'nova-payments', 'New', 'warn', 'Fixed in 1.7.9', 'Cve.dc.html'),
+        row('26 Nov 2026 22:14', 'low', 'Apdex below 0.85', 'New Relic · payments-api', 'nova-payments', 'Reported', 'ok', 'Attached to #39', 'Investigations.dc.html'),
+        row('26 Nov 2026 18:03', 'medium', '#38 · Memory above 90% on worker', 'New Relic · queue-worker', 'nova-payments', 'Failed', 'bad', 'Time budget reached', 'Investigations.dc.html')
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

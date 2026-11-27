@@ -1,0 +1,37 @@
+{
+  "v": 3,
+  "createdOnFiles": {"v": 1, "at": "2026-11-27T12:34:35Z"},
+  "title": "Ops Copilot UI",
+  "launch": {"view": "canvas"},
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {"x": 0, "y": 0, "w": 1440, "h": 1180, "title": "Dashboard", "expand": "fill", "is_interactive": true},
+    "Investigations.dc.html": {"x": 1520, "y": 0, "w": 1440, "h": 1240, "title": "Investigations", "expand": "fill", "is_interactive": true},
+    "Cve.dc.html": {"x": 3040, "y": 0, "w": 1440, "h": 1100, "title": "CVE", "expand": "fill", "is_interactive": true},
+    "Knowledge.dc.html": {"x": 4560, "y": 0, "w": 1440, "h": 1180, "title": "Knowledge", "expand": "fill", "is_interactive": true},
+    "Projects.dc.html": {"x": 0, "y": 1400, "w": 1440, "h": 1180, "title": "Projects", "expand": "fill", "is_interactive": true},
+    "Settings.dc.html": {"x": 1520, "y": 1400, "w": 1440, "h": 1240, "title": "Settings", "expand": "fill", "is_interactive": true},
+    "SignIn.dc.html": {"x": 3040, "y": 1400, "w": 1440, "h": 860, "title": "Sign in", "expand": "fill", "is_interactive": true},
+    "Consent.dc.html": {"x": 4560, "y": 1400, "w": 1440, "h": 860, "title": "MCP consent (OAuth authorize)", "expand": "fill", "is_interactive": true},
+    "Sidebar.dc.html": {"x": 0, "y": 2800, "w": 272, "h": 900, "title": "Component · Sidebar", "is_interactive": true},
+    "Topbar.dc.html": {"x": 352, "y": 2800, "w": 1180, "h": 80, "title": "Component · Topbar"}
+  },
+  "order": [
+    "Main.dc.html",
+    "Investigations.dc.html",
+    "Cve.dc.html",
+    "Knowledge.dc.html",
+    "Projects.dc.html",
+    "Settings.dc.html",
+    "SignIn.dc.html",
+    "Consent.dc.html",
+    "Sidebar.dc.html",
+    "Topbar.dc.html"
+  ],
+  "notes": {
+    "title": {"x": 0, "y": -300, "text": "Ops Copilot lite · liquid glass on SmartOSC BMS", "kind": "title1", "maxW": 6000}
+  },
+  "designSystems": [
+    {"title": "SmartOSC BMS Design System (Remix)", "namespace": "smartoscbmsdesignsystemremix_a0c1fd", "artifact": "https://claude.ai/artifact/5wooo9pvkw6ptKrVZT5SSB", "version": "1795581839-11f8", "copiedAt": "2026-11-27T12:34:35Z"}
+  ]
+}

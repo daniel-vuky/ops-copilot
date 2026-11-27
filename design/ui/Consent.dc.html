@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Allow access — Ops Copilot</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/smartoscbmsdesignsystemremix_a0c1fd/colors_and_type.css">
+<link rel="stylesheet" href="oc-glass.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="oc-root" style="display: flex; align-items: center; justify-content: center; padding: 24px 16px;">
+  <main class="glass glass-strong" style="width: 100%; max-width: 540px; padding: 32px; display: flex; flex-direction: column; gap: 18px;">
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <span aria-hidden="true" style="position: relative; width: 28px; height: 28px; flex: none;">
+        <span style="position: absolute; left: 0; top: 0; width: 19px; height: 19px; border-radius: 6px; background: linear-gradient(135deg, #4D7BC2, #295CA9);"></span>
+        <span style="position: absolute; right: 0; bottom: 0; width: 17px; height: 17px; border-radius: 6px; background: linear-gradient(135deg, rgba(122,200,113,0.95), rgba(69,162,62,0.9));"></span>
+      </span>
+      <span class="strong">Ops Copilot</span>
+    </div>
+
+    <sc-if value="{{isAsk}}" hint-placeholder-val="{{true}}">
+      <div>
+        <h1 class="h1">Allow an app to read Ops Copilot documents?</h1>
+        <form method="post" action="SignIn.dc.html" class="row" style="margin: 6px 0 0; gap: 4px;">
+          <span class="muted">Signed in as <span class="strong" style="color: var(--oc-ink);">khoa.le@smartosc.com</span>.</span>
+          <button class="linkbtn link" type="submit" style="min-height: 0; padding: 0 2px;">Not you? Sign out</button>
+        </form>
+      </div>
+
+      <div class="glass-sunk" style="padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+        <div class="between">
+          <span class="small muted">The app calls itself</span>
+          <span class="tag">Name supplied by the app · not verified</span>
+        </div>
+        <p style="margin: 0; font-size: 17px; font-weight: 700;">{{client}}</p>
+        <div>
+          <span class="small muted">It will return you to</span>
+          <p class="mono" style="margin: 2px 0 0; font-size: 15px; font-weight: 700; color: var(--brand-blue-700);">{{redirectHost}}</p>
+          <p class="small muted" style="margin: 2px 0 0;">Only allow if you started this from that app just now.</p>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <p class="overline" style="margin: 0;">It will be able to</p>
+        <div class="row" style="flex-wrap: nowrap; align-items: flex-start;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#166534" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none; margin-top: 1px;"><path d="M20 6 9 17l-5-5"></path></svg>
+          <span>Search and read the shared document library (uploaded by everyone on the team)</span>
+        </div>
+        <p class="overline" style="margin: 8px 0 0;">It will not be able to</p>
+        <div class="row" style="flex-wrap: nowrap; align-items: flex-start;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#991B1B" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none; margin-top: 1px;"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+          <span>Read code, New Relic data, investigations or settings</span>
+        </div>
+        <div class="row" style="flex-wrap: nowrap; align-items: flex-start;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#991B1B" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none; margin-top: 1px;"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+          <span>Upload, change or delete anything</span>
+        </div>
+      </div>
+
+      <p class="small muted" style="margin: 0;">Access lasts up to <span class="mono">30</span> days. You can revoke it any time in Settings.</p>
+
+      <p class="small muted" style="margin: 0;">Deny sends you back to the app with nothing shared.</p>
+      <form method="post" action="Settings.dc.html" class="row" style="justify-content: flex-end; gap: 10px;">
+        <button class="btn" type="submit" name="decision" value="deny">Deny</button>
+        <button class="btn btn-primary" type="submit" name="decision" value="allow">Allow</button>
+      </form>
+    </sc-if>
+
+    <sc-if value="{{isProblem}}" hint-placeholder-val="{{false}}">
+      <div class="state" style="padding: 12px 0;">
+        <span class="{{iconCls}}">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{iconPath}}"></path></svg>
+        </span>
+        <h1 class="h1" style="font-size: 20px;">{{pTitle}}</h1>
+        <p class="state-body">{{pBody}}</p>
+      </div>
+      <div class="row" style="justify-content: center;">
+        <a class="btn" href="Main.dc.html">Go to Ops Copilot</a>
+      </div>
+    </sc-if>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"state":{"editor":"enum","options":["ask","bad_redirect","expired","unknown_client"],"default":"ask"},"client":{"editor":"enum","options":["Claude Code","claude.ai"],"default":"Claude Code"},"$preview":{"width":1440,"height":860}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const state = this.props.state ?? 'ask';
+    const client = this.props.client ?? 'Claude Code';
+    const X = 'M18 6 6 18M6 6l12 12';
+    const CLOCK = 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 6v6l4 2';
+    const P = {
+      bad_redirect: ['state-icon state-icon-err', X, 'This request can’t be completed', 'The app asked to return to an address it did not register. Nothing was shared. If you did not start this, ignore it.'],
+      expired: ['state-icon', CLOCK, 'This request has expired', 'A connection request is kept for 10 minutes. Start the connection again from the app.'],
+      unknown_client: ['state-icon state-icon-err', X, 'Unknown app', 'This app is not registered, or its registration was removed. Start the connection again from the app.']
+    };
+    const p = P[state] || P.expired;
+    return {
+      isAsk: state === 'ask', isProblem: state !== 'ask',
+      client,
+      redirectHost: client === 'claude.ai' ? 'claude.ai' : 'localhost:53172 (this computer)',
+      iconCls: p[0], iconPath: p[1], pTitle: p[2], pBody: p[3]
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings — Ops Copilot</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/smartoscbmsdesignsystemremix_a0c1fd/colors_and_type.css">
+<link rel="stylesheet" href="oc-glass.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="oc-root">
+<div class="oc-shell">
+  <div class="oc-side-wrap"><dc-import name="Sidebar" active="settings" mode="{{mode}}" admin="{{admin}}" hint-size="100%,900px"></dc-import></div>
+  <main class="oc-main">
+    <dc-import name="Topbar" crumb="Configure" title="Settings" mode="{{mode}}" hint-size="100%,76px"></dc-import>
+
+    <section class="glass" aria-labelledby="con">
+      <div class="card-h">
+        <h2 class="card-t" id="con">{{conTitle}}</h2>
+        <span class="small muted">Apps that connected to the document MCP. Revoking ends their access at once.</span>
+      </div>
+      <div class="scroll-x">
+        <table class="tbl">
+          <thead><tr><th scope="col">App</th><sc-if value="{{admin}}" hint-placeholder-val="{{true}}"><th scope="col">Person</th></sc-if><th scope="col">Connected</th><th scope="col">Last used</th><th scope="col">Expires</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
+          <tbody>
+            <sc-for list="{{conns}}" as="c" hint-placeholder-count="3">
+              <tr>
+                <td class="strong">{{c.app}}<div class="small muted mono">{{c.host}}</div></td>
+                <sc-if value="{{admin}}" hint-placeholder-val="{{true}}"><td class="small">{{c.who}}</td></sc-if>
+                <td class="mono small">{{c.since}}</td>
+                <td class="mono small">{{c.used}}</td>
+                <td class="mono small">{{c.exp}}</td>
+                <td class="r"><button class="btn btn-sm btn-danger" type="button" aria-label="{{c.label}}">Revoke</button></td>
+              </tr>
+            </sc-for>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="cols-1-1">
+      <section class="glass" aria-labelledby="keys">
+        <div class="card-h"><h2 class="card-t" id="keys">{{keysTitle}}</h2><button class="btn btn-sm" type="button">Create key</button></div>
+        <div class="list">
+          <div class="li"><span class="grow"><span class="strong">ci-docs-sync</span><div class="small muted">Khoa Le · last used <span class="mono">24 Nov 2026</span></div></span><span class="secret">oc_c19d…</span><span class="small muted">Expires <span class="mono">31 Jan 2027</span></span><button class="btn btn-sm btn-danger" type="button" aria-label="Revoke key ci-docs-sync">Revoke</button></div>
+          <div class="li"><span class="grow"><span class="strong">notebook-search</span><div class="small muted">Khoa Le · never used</div></span><span class="secret">oc_88e2…</span><span class="small muted">Expires <span class="mono">27 Feb 2027</span></span><button class="btn btn-sm btn-danger" type="button" aria-label="Revoke key notebook-search">Revoke</button></div>
+        </div>
+        <div class="card-f"><span class="small muted">Keys read documents only and expire within <span class="mono">365</span> days. Send one as <span class="mono">Authorization: Bearer</span> or <span class="mono">x-api-key</span>.</span></div>
+      </section>
+
+      <sc-if value="{{admin}}" hint-placeholder-val="{{true}}">
+        <section class="glass" aria-labelledby="hooks">
+          <div class="card-h"><h2 class="card-t" id="hooks">Webhooks</h2><span class="tag">Admin</span></div>
+          <div class="list">
+            <div class="li"><span class="pill p-success">Receiving</span><span class="grow"><span class="strong">New Relic</span><div class="mono small muted">/hooks/newrelic/•••••a91c · last <span>27 Nov 2026 09:31</span></div></span><button class="btn btn-sm" type="button">Rotate token</button></div>
+            <div class="li"><span class="pill p-success">Receiving</span><span class="grow"><span class="strong">Azure Monitor</span><div class="mono small muted">/hooks/azure/•••••02fe · last <span>27 Nov 2026 08:52</span></div></span><button class="btn btn-sm" type="button">Rotate token</button></div>
+          </div>
+          <div class="card-f"><span class="small muted">The token is part of the URL you paste into the source. Rotating stops the old URL at once, so update the source right after.</span></div>
+        </section>
+      </sc-if>
+
+      <section class="glass" aria-labelledby="notify">
+        <div class="card-h"><h2 class="card-t" id="notify">Notifications</h2></div>
+        <div class="card-b" style="display: flex; flex-direction: column; gap: 14px;">
+          <div class="between"><div><span class="strong">Email (SMTP)</span><div class="small muted mono">smtp.office365.com:587 · ops-copilot@smartosc.com</div></div><div class="row"><span class="pill p-success">Working</span><sc-if value="{{admin}}" hint-placeholder-val="{{true}}"><button class="btn btn-sm" type="button">Send test</button></sc-if></div></div>
+          <div class="between"><div><span class="strong">Google Chat</span><div class="small muted">Space “Ops alerts” · last post failed, retried <span class="mono">1</span>×</div></div><div class="row"><span class="pill p-warning">Retrying</span><sc-if value="{{admin}}" hint-placeholder-val="{{true}}"><button class="btn btn-sm" type="button">Send test</button></sc-if></div></div>
+          <sc-if value="{{admin}}" hint-placeholder-val="{{true}}">
+            <form class="row" style="align-items: flex-end;">
+              <label class="field grow"><span>Recipients for the Unassigned project</span><input class="input" value="khoa.le@smartosc.com"><span class="hint">Allowlisted emails only. Each project sets its own recipients.</span></label>
+              <button class="btn" type="submit">Save</button>
+            </form>
+          </sc-if>
+        </div>
+      </section>
+
+      <section class="glass" aria-labelledby="acc">
+        <div class="card-h"><h2 class="card-t" id="acc">Server configuration</h2><span class="tag">Set in env · restart to change</span></div>
+        <div class="card-b">
+          <dl class="kv">
+            <dt>Allowed people</dt><dd><span class="mono">18</span> emails</dd>
+            <dt>Allowed domains</dt><dd>None</dd>
+            <dt>Admins</dt><dd>Khoa Le</dd>
+            <dt>Investigator</dt><dd class="mono">{{modeText}}</dd>
+            <dt>Model</dt><dd class="mono">claude-opus-5-5</dd>
+            <dt>Budget per run</dt><dd><span class="mono">200k</span> tokens · <span class="mono">30</span> turns · <span class="mono">10</span> min</dd>
+            <dt>Concurrency</dt><dd><span class="mono">2</span> running, <span class="mono">20</span> waiting at most</dd>
+            <dt>Company MCP</dt><dd>Token set · <span class="mono">4</span> read tools allowed</dd>
+          </dl>
+        </div>
+      </section>
+    </div>
+
+    <sc-if value="{{showNewKey}}" hint-placeholder-val="{{false}}">
+      <div class="overlay">
+        <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="nk">
+          <h2 class="h2" id="nk">Copy your new key now</h2>
+          <p class="small" style="margin: 0;">This is the only time the full key is shown. Store it somewhere safe.</p>
+          <pre class="code-block">oc_88e2b7f4c1d94a0e9f3b2c6d7a8e1f05</pre>
+          <dl class="kv"><dt>Name</dt><dd>notebook-search</dd><dt>Expires</dt><dd class="mono">27 Feb 2027</dd></dl>
+          <div class="row" style="justify-content: flex-end;"><button class="btn" type="button">Copy key</button><button class="btn btn-primary" type="button">Done</button></div>
+        </div>
+      </div>
+    </sc-if>
+    <sc-if value="{{showRotate}}" hint-placeholder-val="{{false}}">
+      <div class="overlay">
+        <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="rt">
+          <h2 class="h2" id="rt">New Azure Monitor webhook URL</h2>
+          <p class="small" style="margin: 0;">The old URL has stopped working. Paste this one into the action group now. It is shown only once.</p>
+          <pre class="code-block" style="white-space: pre-wrap; overflow-wrap: anywhere;">https://[PUBLIC_URL]/hooks/azure/q8Zt4mWv1pN6sK0yR3fB7hJ2cX9eL5aD02fe</pre>
+          <div class="row" style="justify-content: flex-end;"><button class="btn" type="button">Copy URL</button><button class="btn btn-primary" type="button">Done</button></div>
+        </div>
+      </div>
+    </sc-if>
+    <sc-if value="{{showRevoke}}" hint-placeholder-val="{{false}}">
+      <div class="overlay">
+        <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="rv">
+          <h2 class="h2" id="rv">Revoke Claude Code for linh.pham@smartosc.com?</h2>
+          <p class="small" style="margin: 0;">The app loses access at once. To use it again, Linh has to connect and allow it again.</p>
+          <div class="row" style="justify-content: flex-end;"><button class="btn" type="button">Cancel</button><button class="btn btn-danger" type="button">Revoke</button></div>
+        </div>
+      </div>
+    </sc-if>
+  </main>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"mode":{"editor":"enum","options":["cli","api"],"default":"cli"},"admin":{"editor":"boolean","default":true},"dialog":{"editor":"enum","options":["none","newkey","rotate","revoke"],"default":"none"},"$preview":{"width":1440,"height":1240}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const mode = this.props.mode ?? 'cli';
+    const admin = this.props.admin ?? true;
+    const dialog = this.props.dialog ?? 'none';
+    const c = (app, host, who, since, used, exp) => ({ app, host, who, since, used, exp, label: 'Revoke ' + app + ' for ' + who });
+    const all = [
+      c('Claude Code', 'localhost', 'khoa.le@smartosc.com', '20 Nov 2026', '27 Nov 2026 09:34', '20 Dec 2026'),
+      c('claude.ai', 'claude.ai', 'khoa.le@smartosc.com', '22 Nov 2026', '26 Nov 2026 17:02', '22 Dec 2026'),
+      c('Claude Code', 'localhost', 'linh.pham@smartosc.com', '25 Nov 2026', '25 Nov 2026 14:20', '25 Dec 2026')
+    ];
+    return {
+      mode, admin,
+      conTitle: admin ? 'MCP connections · everyone' : 'Your MCP connections',
+      keysTitle: admin ? 'API keys · everyone' : 'Your API keys',
+      conns: admin ? all : all.slice(0, 2),
+      modeText: mode === 'api' ? 'api · Anthropic Go SDK' : 'cli · claude -p, pinned CLI',
+      showNewKey: dialog === 'newkey', showRotate: dialog === 'rotate', showRevoke: dialog === 'revoke'
+    };
+  }
+}
+</script>
+</body>
+</html>

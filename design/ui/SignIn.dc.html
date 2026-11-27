@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign in — Ops Copilot</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/smartoscbmsdesignsystemremix_a0c1fd/colors_and_type.css">
+<link rel="stylesheet" href="oc-glass.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="oc-root" style="display: flex; align-items: center; justify-content: center; padding: 24px 16px;">
+  <div style="width: 100%; max-width: 980px; display: flex; flex-wrap: wrap; gap: 20px; align-items: stretch;">
+    <main class="glass glass-strong signin-main" style="flex: 1 1 360px; padding: 36px 32px; display: flex; flex-direction: column; gap: 18px; justify-content: center;">
+      <div>
+        <h1 class="h1">Sign in to Ops Copilot</h1>
+        <p class="muted" style="margin: 6px 0 0;">Use the Google account an admin added to the allowlist.</p>
+      </div>
+      <a class="btn btn-google" href="Main.dc.html">
+        <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path></svg>
+        Sign in with Google
+      </a>
+      <sc-if value="{{showDenied}}" hint-placeholder-val="{{false}}">
+        <div class="banner" role="alert"><strong>Not on the allowlist.</strong><span class="small">linh.pham@gmail.com can’t sign in. Ask an admin (Khoa Le) to add this email, or sign in with another account.</span></div>
+      </sc-if>
+      <p class="hint" style="margin: 0;">Only people on the allowlist can sign in. Apps such as Claude Code connect separately and ask for your consent first.</p>
+    </main>
+
+    <aside class="glass-dark signin-brand" style="flex: 1 1 360px; padding: 32px; display: flex; flex-direction: column; gap: 20px; justify-content: space-between;">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <span aria-hidden="true" style="position: relative; width: 36px; height: 36px; flex: none;">
+          <span style="position: absolute; left: 0; top: 0; width: 24px; height: 24px; border-radius: 8px; background: linear-gradient(135deg, #4D7BC2, #295CA9); box-shadow: inset 0 1px 0 rgba(255,255,255,0.4);"></span>
+          <span style="position: absolute; right: 0; bottom: 0; width: 22px; height: 22px; border-radius: 8px; background: linear-gradient(135deg, rgba(122,200,113,0.95), rgba(69,162,62,0.9)); box-shadow: inset 0 1px 0 rgba(255,255,255,0.45);"></span>
+        </span>
+        <div style="display: flex; flex-direction: column; line-height: 1.2;">
+          <span style="font-size: 18px; font-weight: 700; color: #FFFFFF;">Ops Copilot</span>
+          <span style="font-size: 12px; color: #A5B4CF;">SmartOSC internal</span>
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 14px;">
+        <p style="margin: 0; font-size: 24px; font-weight: 700; line-height: 1.25; letter-spacing: -0.02em; color: #FFFFFF;">Alerts investigated, fixes suggested, nothing touched.</p>
+        <ul style="margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 10px; font-size: 13px; color: #DCE5F3;">
+          <li>New Relic and Azure alerts start an investigation</li>
+          <li>Daily CVE scan of your declared stacks</li>
+          <li>Team documents, searchable by Claude</li>
+        </ul>
+      </div>
+      <span style="font-size: 12px; color: #A5B4CF;">Reports go to email and Google Chat.</span>
+    </aside>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"denied":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":860}}'>
+class Component extends DCLogic {
+  renderVals() { return { showDenied: !!this.props.denied }; }
+}
+</script>
+</body>
+</html>

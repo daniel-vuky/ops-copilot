@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Projects — Ops Copilot</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/smartoscbmsdesignsystemremix_a0c1fd/colors_and_type.css">
+<link rel="stylesheet" href="oc-glass.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="oc-root">
+<div class="oc-shell">
+  <div class="oc-side-wrap"><dc-import name="Sidebar" active="projects" mode="{{mode}}" hint-size="100%,900px"></dc-import></div>
+  <main class="oc-main">
+    <dc-import name="Topbar" crumb="Configure" title="Projects" mode="{{mode}}" hint-size="100%,76px"></dc-import>
+
+    <div class="cols-1-2">
+      <section class="glass" aria-labelledby="pl">
+        <div class="card-h"><h2 class="card-t" id="pl">Projects · <span class="mono">2</span></h2><button class="btn btn-sm" type="button">New project</button></div>
+        <ul class="list" style="list-style: none; margin: 0; padding: 0;">
+          <li><a class="li" href="Projects.dc.html">
+            <span class="grow" style="display: flex; flex-direction: column; gap: 4px;"><span class="strong">Unassigned</span><span class="small muted">Alerts that match no project · no repositories</span></span>
+            <span class="tag"><span class="mono">1</span> alert</span>
+          </a></li>
+          <li><a class="li li-sel" href="Projects.dc.html" aria-current="page">
+            <span class="grow" style="display: flex; flex-direction: column; gap: 4px;"><span class="strong">atlas-storefront</span><span class="small muted">Magento · <span class="mono">3</span> New Relic apps · <span class="mono">1</span> resource group</span></span>
+            <span class="tag"><span class="mono">2</span> new CVEs</span>
+          </a></li>
+          <li><a class="li" href="Projects.dc.html">
+            <span class="grow" style="display: flex; flex-direction: column; gap: 4px;"><span class="strong">nova-payments</span><span class="small muted">Node · <span class="mono">2</span> New Relic apps · <span class="mono">1</span> resource group</span></span>
+            <span class="tag"><span class="mono">1</span> new CVE</span>
+          </a></li>
+        </ul>
+      </section>
+
+      <div class="stack">
+        <form class="glass glass-strong" aria-labelledby="src">
+          <div class="card-h"><h2 class="card-t" id="src">atlas-storefront · where to look</h2><button class="btn btn-sm btn-primary" type="submit">Save</button></div>
+          <div class="card-b" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 14px;">
+            <label class="field"><span>Name</span><input class="input" value="atlas-storefront"></label>
+            <label class="field"><span>Report recipients <span class="tag" style="margin-left: 4px;">Admin only</span></span>
+              <sc-if value="{{isAdmin}}" hint-placeholder-val="{{true}}"><input class="input" value="khoa.le@smartosc.com, linh.pham@smartosc.com"></sc-if>
+              <sc-if value="{{notAdmin}}" hint-placeholder-val="{{false}}"><input class="input" value="khoa.le@smartosc.com, linh.pham@smartosc.com" readonly></sc-if>
+              <span class="hint">Allowlisted emails only.</span></label>
+            <label class="field"><span>New Relic apps</span><input class="input mono" value="checkout-api, storefront-web, catalog-api"><span class="hint">Alerts from these apps open investigations here.</span></label>
+            <label class="field"><span>Azure resource groups</span><input class="input mono" value="rg-atlas-prod"></label>
+            <label class="field" style="grid-column: 1 / -1;"><span>Repositories on the company MCP <span class="tag" style="margin-left: 4px;">Admin only</span></span>
+              <sc-if value="{{isAdmin}}" hint-placeholder-val="{{true}}"><input class="input mono" value="commerce/atlas-storefront, commerce/atlas-checkout"></sc-if>
+              <sc-if value="{{notAdmin}}" hint-placeholder-val="{{false}}"><input class="input mono" value="commerce/atlas-storefront, commerce/atlas-checkout" readonly></sc-if><span class="hint">Investigations of this project may read these repositories and no others, through the company MCP. Nothing here clones or indexes code.</span></label>
+          </div>
+        </form>
+
+        <section class="glass" aria-labelledby="stk">
+          <div class="card-h"><h2 class="card-t" id="stk">Declared stack · <span class="mono">412</span> packages</h2><a class="link small" href="Cve.dc.html">See findings</a></div>
+          <div class="card-b" style="display: flex; flex-direction: column; gap: 18px;">
+            <div>
+              <h3 class="sec-h">From files</h3>
+              <label class="drop" style="padding: 18px;">
+                <span class="strong">Upload a lockfile or manifest</span>
+                <span class="small muted">composer.lock, composer.json, package-lock.json, package.json, pnpm-lock.yaml, yarn.lock, go.mod, requirements.txt. A new upload of the same file replaces the old one.</span>
+                <input type="file" class="sr" accept=".lock,.json,.yaml,.mod,.txt">
+              </label>
+              <ul class="list glass-sunk" style="list-style: none; margin: 10px 0 0; padding: 0;">
+                <li class="li"><span class="tag">composer.lock</span><span class="grow small"><span class="mono">389</span> packages · Packagist</span><span class="mono small muted">25 Nov 2026</span><button class="btn btn-sm btn-ghost" type="button" aria-label="Remove composer.lock">Remove</button></li>
+                <li class="li"><span class="tag">package.json</span><span class="grow small"><span class="mono">20</span> packages · npm · <span class="warn-fg">ranges, so versions are guessed. Upload the lockfile for exact results.</span></span><span class="mono small muted">25 Nov 2026</span><button class="btn btn-sm btn-ghost" type="button" aria-label="Remove package.json">Remove</button></li>
+              </ul>
+            </div>
+            <div>
+              <h3 class="sec-h">Entered by hand · <span class="mono">3</span></h3>
+              <div class="scroll-x glass-sunk">
+                <table class="tbl">
+                  <thead><tr><th scope="col">Ecosystem</th><th scope="col">Package</th><th scope="col">Version</th><th scope="col">Scanned</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
+                  <tbody>
+                    <tr><td>Packagist</td><td class="mono small">magento/product-community-edition</td><td class="mono small">2.4.6</td><td class="small">Yes</td><td class="r"><button class="btn btn-sm btn-ghost" type="button" aria-label="Remove magento/product-community-edition">Remove</button></td></tr>
+                    <tr><td>Other</td><td class="mono small">nginx</td><td class="mono small">1.24.0</td><td><span class="tag">Not scanned</span></td><td class="r"><button class="btn btn-sm btn-ghost" type="button" aria-label="Remove nginx">Remove</button></td></tr>
+                    <tr><td>Other</td><td class="mono small">php</td><td class="mono small">8.2.12</td><td><span class="tag">Not scanned</span></td><td class="r"><button class="btn btn-sm btn-ghost" type="button" aria-label="Remove php">Remove</button></td></tr>
+                    <tr>
+                      <td><select class="select" aria-label="Ecosystem"><option>npm</option><option>Packagist</option><option>Go</option><option>PyPI</option><option>Other (not scanned)</option></select></td>
+                      <td><input class="input mono" aria-label="Package name" placeholder="vendor/package"></td>
+                      <td><input class="input mono" aria-label="Version" placeholder="1.2.3"></td>
+                      <td class="small muted">—</td>
+                      <td class="r"><button class="btn btn-sm" type="button">Add</button></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"mode":{"editor":"enum","options":["cli","api"],"default":"cli"},"admin":{"editor":"boolean","default":true},"$preview":{"width":1440,"height":1180}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const isAdmin = this.props.admin ?? true;
+    return { mode: this.props.mode ?? 'cli', isAdmin, notAdmin: !isAdmin };
+  }
+}
+</script>
+</body>
+</html>
