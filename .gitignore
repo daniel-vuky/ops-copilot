@@ -1,0 +1,10 @@
+# Internal working notes (brainstorming specs, plans), not published
+docs/superpowers/
+.superpowers/
+
+# macOS
+.DS_Store
+
+# Local env and secrets
+.env*
+!.env.example

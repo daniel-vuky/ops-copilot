@@ -7,9 +7,9 @@ Where each project skill came from, so it can be updated or audited later. All o
 | Skill | Notes |
 |---|---|
 | add-adr | Uses `.adr-dir` at repo root (`docs/decisions`) |
-| create-issues | Needs the `github` MCP server (`.mcp.json`) |
-| update-issues | Needs the `github` MCP server |
-| get-board-items | Needs the `gh-projects` MCP server, or `gh` CLI |
+| create-issues | Runs through the `gh` CLI |
+| update-issues | Runs through the `gh` CLI |
+| get-board-items | Runs through the `gh` CLI |
 
 ## Third-party (reviewed 2026-11-23 before install)
 
