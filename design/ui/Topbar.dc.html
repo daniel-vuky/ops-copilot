@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ops Copilot top bar</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/smartoscbmsdesignsystemremix_a0c1fd/colors_and_type.css">
+<link rel="stylesheet" href="oc-glass.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<header class="glass topbar" style="font-family: var(--font-sans, Inter), system-ui, sans-serif; color: var(--oc-ink);">
+  <div style="flex: 1 1 240px; min-width: 0;">
+    <p class="crumb" style="margin: 0;">{{crumb}}</p>
+    <h1 class="h1">{{title}}</h1>
+  </div>
+  <div class="topbar-r">
+    <form class="search" role="search" aria-label="Site search" action="Knowledge.dc.html">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.3-4.3"></path></svg>
+      <input type="search" name="q" aria-label="Search documents" placeholder="Search documents…">
+    </form>
+    <span class="mode"><span class="sr">Environment and investigator mode: </span>{{modeText}}</span>
+    <span class="muted small mono"><span class="sr">All times are in </span>ICT · UTC+7</span>
+    <span class="avatar" aria-hidden="true">KL</span><span class="sr">Signed in as Khoa Le</span>
+  </div>
+</header>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"crumb":{"editor":"text","default":"Operate"},"title":{"editor":"text","default":"Dashboard"},"mode":{"editor":"enum","options":["cli","api"],"default":"cli"},"$preview":{"width":1180,"height":80}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const mode = this.props.mode ?? 'cli';
+    return {
+      crumb: this.props.crumb ?? 'Operate',
+      title: this.props.title ?? 'Dashboard',
+      modeText: mode === 'api' ? 'Production · api' : 'POC · cli'
+    };
+  }
+}
+</script>
+</body>
+</html>
