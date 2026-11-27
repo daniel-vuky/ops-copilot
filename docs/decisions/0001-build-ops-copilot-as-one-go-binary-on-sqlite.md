@@ -4,7 +4,7 @@ Date: 2026-11-27
 
 ## Status
 
-Accepted
+Amended by [0004](0004-settle-open-points-in-adrs-0001-0003.md)
 
 ## Context
 
