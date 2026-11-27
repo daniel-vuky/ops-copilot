@@ -129,7 +129,7 @@ Include the final review's four sections in the PR body.
 - **Docker first.** Every toolchain (Go, Node/pnpm, linters) runs in the pinned toolchain image through `make` (ADR 0001 §14). Do not install anything on the host (`brew`, `go install`, `npm -g`, `pip`). The host needs only Docker, `make` and `git`. If Docker is not running, ask Daniel to start Docker Desktop.
 - **Language.** Talk to Daniel in Vietnamese. Code, comments, docs, ADRs, commits, issues and PRs are in English.
 - **Public text.** The repository is public: issues, PRs, commits and files must not contain real hostnames, emails, tokens, webhook URLs or customer names.
-- **Verify before claiming.** Run the checks (`make check` once it exists) and read their output before saying something works.
+- **Verify before claiming.** Run the checks (`make check`) and read their output before saying something works.
 
 ## Architecture (from ADR 0001)
 
@@ -154,7 +154,22 @@ Include the final review's four sections in the PR body.
 
 ## Commands
 
-The toolchain is not scaffolded yet. When the `Makefile` lands, list its targets here (at least `toolchain`, `build`, `test`, `lint`, `check`). Run `make` from the main checkout, not a git worktree: the toolchain container mounts only the worktree directory and cannot reach the git dir it points to.
+| Command | What it does |
+|---|---|
+| `make help` | List the targets |
+| `make toolchain` | Build the pinned toolchain image (other targets build it when missing) |
+| `make lint` | ESLint and `tsc` on `web/`, then golangci-lint |
+| `make test` | Go tests (frontend tests arrive with SU-07) |
+| `make build` | Vite build into `web/dist`, then the static binary into `bin/ops-copilot` |
+| `make check` | `lint`, `test`, `build` in that order; stops at the first failure |
+| `make shell` | Interactive bash in the toolchain |
+| `make clean` | Remove `bin` and `web/dist` |
+
+`lint` and `build` each run a `-web` half, then a `-go` half; `test` runs only `test-go` until SU-07 adds frontend tests. The halves (`lint-web`, `lint-go`, `test-go`, `build-web`, `build-go`, plus `web-deps`) are listed by `make help` and can each be run on their own.
+
+- Run `make` from the main checkout, not a git worktree: the toolchain container mounts only the worktree directory and cannot reach the git dir it points to.
+- The toolchain image tag follows the hash of `build/toolchain/Dockerfile`. Old tags stay behind (about 1.7 GB each); remove them with `docker image rm`.
+- Go, golangci-lint and pnpm caches live in the `ops-copilot-cache` Docker volume. pnpm copies packages from it into `web/node_modules` (no hard links).
 
 ## Project skills
 
