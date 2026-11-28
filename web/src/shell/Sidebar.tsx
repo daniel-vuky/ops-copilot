@@ -17,12 +17,18 @@ export type SidebarProps = {
  */
 export function Sidebar({ user }: SidebarProps) {
   const location = useLocation();
-  // The key of the location the menu was opened at. Every navigation (a nav
-  // link, the Topbar search, an in-page link, back or forward) brings a new
-  // key, so the menu is open only until the location changes, with no effect.
-  const [openedAt, setOpenedAt] = useState<string | null>(null);
-  const open = openedAt === location.key;
-  const close = () => setOpenedAt(null);
+  const [open, setOpen] = useState(false);
+  // Every navigation (a nav link, the Topbar search, an in-page link, back or
+  // forward) changes location.key. When the key differs from the last one
+  // seen, the menu closes during render (React's "adjust state when a value
+  // changes" pattern, with no effect), so going back to an earlier history
+  // entry never reopens it.
+  const [seenKey, setSeenKey] = useState(location.key);
+  if (seenKey !== location.key) {
+    setSeenKey(location.key);
+    setOpen(false);
+  }
+  const close = () => setOpen(false);
 
   return (
     <nav className="glass-dark oc-nav" aria-label="Main navigation">
@@ -40,7 +46,7 @@ export function Sidebar({ user }: SidebarProps) {
           type="button"
           aria-expanded={open ? "true" : "false"}
           aria-controls="oc-nav-list"
-          onClick={() => setOpenedAt(open ? null : location.key)}
+          onClick={() => setOpen(!open)}
         >
           Menu
         </button>

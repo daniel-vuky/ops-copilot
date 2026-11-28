@@ -232,6 +232,24 @@ describe("collapsed menu", () => {
     expectClosed();
   });
 
+  it("stays closed when going back after a Topbar search", async () => {
+    const { user, router } = await openAt("/");
+    await user.type(screen.getByRole("searchbox", { name: "Search documents" }), "runbook{Enter}");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Knowledge");
+    await act(() => router.navigate(-1));
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Dashboard");
+    expectClosed();
+  });
+
+  it("stays closed when going back after an in-page link", async () => {
+    const { user, router } = await openAt("/nope");
+    await user.click(screen.getByRole("link", { name: "Go to the dashboard" }));
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Dashboard");
+    await act(() => router.navigate(-1));
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Page not found");
+    expectClosed();
+  });
+
   it("still closes on a nav link and toggles with the Menu button", async () => {
     const { user } = await openAt("/");
     await user.click(menu());
