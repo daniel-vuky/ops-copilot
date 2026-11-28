@@ -43,4 +43,10 @@ describe("styles", () => {
     expect(css).toContain('"Inter Variable"');
     expect(css).toContain('"JetBrains Mono Variable"');
   });
+
+  it("app.css keeps the Menu button readable on hover", () => {
+    // .btn:hover in oc-glass.css outranks .oc-burger and sets a white background.
+    const css = readFileSync(appCSS, "utf8");
+    expect(css).toMatch(/\.oc-burger:hover\s*\{[^}]*color:\s*#FFFFFF/);
+  });
 });

@@ -4,7 +4,7 @@
  */
 export function ErrorPanel() {
   return (
-    <section className="glass" aria-labelledby="oc-error-h">
+    <section className="glass" role="alert" aria-labelledby="oc-error-h">
       <div className="state">
         <p className="state-title" id="oc-error-h">
           Something went wrong

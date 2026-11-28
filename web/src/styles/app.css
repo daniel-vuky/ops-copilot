@@ -11,6 +11,12 @@
 
 body { margin: 0; }
 
+/* ---------- Skip link and focus targets ---------- */
+.oc-skip { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.oc-skip:focus { left: 16px; top: 16px; z-index: 100; width: auto; height: auto; overflow: visible; clip: auto; padding: 10px 14px; border-radius: var(--radius-md, 10px); background: #FFFFFF; color: var(--oc-ink); font-weight: 600; box-shadow: 0 6px 16px rgba(15, 27, 51, 0.2); }
+/* Focused by script after navigation or the skip link; they are not controls. */
+.oc-main:focus, .oc-page-title:focus { outline: none; }
+
 /* ---------- Sidebar ---------- */
 .oc-nav { font-family: var(--font-sans), system-ui, sans-serif; width: 100%; padding: 16px 12px; display: flex; flex-direction: column; gap: 2px; }
 .oc-brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 14px; }
@@ -22,6 +28,8 @@ body { margin: 0; }
 .oc-brand-name { font-size: 15px; font-weight: 700; color: #FFFFFF; letter-spacing: -0.01em; }
 .oc-brand-sub { font-size: 12px; color: #A5B4CF; }
 .oc-burger { background: rgba(255, 255, 255, 0.1); color: #FFFFFF; border-color: rgba(255, 255, 255, 0.35); }
+/* .btn:hover (0,2,0) would otherwise turn the button white on white. */
+.oc-burger:hover { background: rgba(255, 255, 255, 0.18); color: #FFFFFF; border-color: rgba(255, 255, 255, 0.5); }
 .oc-nav-group { display: contents; }
 
 .oc-sys { margin-top: 14px; padding: 12px; border-radius: 14px; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1); display: flex; flex-direction: column; gap: 8px; font-size: 12px; }

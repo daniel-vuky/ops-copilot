@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import {
   createMemoryRouter,
   RouterProvider,
@@ -82,14 +83,65 @@ describe("error boundary", () => {
 
   it("renders the error panel inside the shell without the message", () => {
     // React logs the caught render error; silence that one expected log.
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 
     renderAt("/boom", routesWithThrowingChild());
 
+    expect(consoleError).toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Something went wrong");
     expect(screen.getByText("Something went wrong")).toBeInTheDocument();
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
     expect(within(nav).getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
     expect(screen.queryByText(/boom-secret-detail/)).toBeNull();
     expect(document.body.textContent).not.toContain("boom-secret-detail");
+  });
+
+  it("recovers when a nav link is followed from the error frame", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const user = userEvent.setup();
+
+    renderAt("/boom", routesWithThrowingChild());
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    await user.click(within(nav).getByRole("link", { name: "Projects" }));
+
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Projects");
+    expect(screen.queryByText("Something went wrong")).toBeNull();
+    expect(screen.getByText("This screen is not built yet.")).toBeInTheDocument();
+  });
+});
+
+describe("focus", () => {
+  it("does not move focus on the first render", () => {
+    renderAt("/");
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("moves focus to the new page title after navigation", async () => {
+    const user = userEvent.setup();
+    renderAt("/");
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+
+    await user.click(within(nav).getByRole("link", { name: "Knowledge" }));
+
+    const title = screen.getByRole("heading", { level: 1 });
+    expect(title).toHaveTextContent("Knowledge");
+    expect(title).toHaveFocus();
+    expect(title).toHaveAttribute("tabindex", "-1");
+  });
+
+  it("offers a skip link to the main content as the first focusable element", async () => {
+    const user = userEvent.setup();
+    renderAt("/");
+    const skip = screen.getByRole("link", { name: "Skip to content" });
+    const main = screen.getByRole("main");
+
+    expect(skip).toHaveAttribute("href", "#main");
+    expect(main).toHaveAttribute("id", "main");
+    expect(main).toHaveAttribute("tabindex", "-1");
+
+    await user.tab();
+    expect(skip).toHaveFocus();
+    await user.click(skip);
+    expect(main).toHaveFocus();
   });
 });

@@ -1,3 +1,4 @@
+import type { Ref } from "react";
 import { Form } from "react-router";
 import type { InvestigatorMode } from "./placeholder";
 
@@ -13,6 +14,8 @@ export type TopbarProps = {
   mode: InvestigatorMode;
   timeZoneLabel: string;
   user: { name: string; initials: string };
+  /** titleRef receives the h1, which takes focus after navigation. */
+  titleRef?: Ref<HTMLHeadingElement>;
 };
 
 /**
@@ -20,12 +23,14 @@ export type TopbarProps = {
  * the current route, the document search, the mode chip, the time-zone note
  * and the signed-in user.
  */
-export function Topbar({ section, title, mode, timeZoneLabel, user }: TopbarProps) {
+export function Topbar({ section, title, mode, timeZoneLabel, user, titleRef }: TopbarProps) {
   return (
     <header className="glass topbar oc-topbar">
       <div className="oc-topbar-l">
         {section !== null && <p className="crumb oc-crumb">{section}</p>}
-        <h1 className="h1">{title}</h1>
+        <h1 className="h1 oc-page-title" ref={titleRef} tabIndex={-1}>
+          {title}
+        </h1>
       </div>
       <div className="topbar-r">
         <Form
