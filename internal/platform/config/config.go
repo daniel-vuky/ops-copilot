@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ const (
 	defaultDisplayTZ  = "Asia/Ho_Chi_Minh"
 	defaultListenAddr = ":8080"
 	defaultLogLevel   = "info"
+	defaultDataDir    = "/data"
 )
 
 // hostnamePattern is the character set allowed in a PUBLIC_URL host name:
@@ -40,6 +42,7 @@ const (
 	reasonLocalZone  = "must name a zone, not Local"
 	reasonListenAddr = "must be host:port with a port from 1 to 65535"
 	reasonLogLevel   = "must be one of debug, info, warn, error"
+	reasonDataDir    = "must be an absolute path"
 )
 
 // Config is the validated process configuration.
@@ -56,6 +59,9 @@ type Config struct {
 	ListenAddr string
 	// LogLevel is the minimum level written to the log.
 	LogLevel slog.Level
+	// DataDir is the absolute, cleaned directory that holds the database,
+	// its snapshots and uploaded files.
+	DataDir string
 }
 
 // VarError reports one environment variable with a bad value.
@@ -74,7 +80,7 @@ func (e *VarError) Error() string {
 
 // Load reads the configuration through getenv and validates it. On failure
 // the error joins one *VarError per bad variable, in the order PUBLIC_URL,
-// DISPLAY_TZ, LISTEN_ADDR, LOG_LEVEL.
+// DISPLAY_TZ, LISTEN_ADDR, LOG_LEVEL, DATA_DIR.
 func Load(getenv func(string) string) (Config, error) {
 	var (
 		cfg  Config
@@ -94,6 +100,9 @@ func Load(getenv func(string) string) (Config, error) {
 	if cfg.LogLevel, err = parseLogLevel(getenv("LOG_LEVEL")); err != nil {
 		errs = append(errs, err)
 	}
+	if cfg.DataDir, err = parseDataDir(getenv("DATA_DIR")); err != nil {
+		errs = append(errs, err)
+	}
 
 	if len(errs) > 0 {
 		return Config{}, errors.Join(errs...)
@@ -109,6 +118,7 @@ func (c Config) LogAttrs() []slog.Attr {
 		slog.String("display_tz", c.DisplayTZ),
 		slog.String("listen_addr", c.ListenAddr),
 		slog.String("log_level", c.LogLevel.String()),
+		slog.String("data_dir", c.DataDir),
 	}
 }
 
@@ -208,6 +218,18 @@ func parseLogLevel(raw string) (slog.Level, error) {
 	default:
 		return 0, &VarError{Name: "LOG_LEVEL", Reason: reasonLogLevel}
 	}
+}
+
+// parseDataDir returns raw, or the default when it is empty, as a cleaned
+// absolute path. A trailing slash is accepted and removed.
+func parseDataDir(raw string) (string, error) {
+	if raw == "" {
+		raw = defaultDataDir
+	}
+	if !filepath.IsAbs(raw) {
+		return "", &VarError{Name: "DATA_DIR", Reason: reasonDataDir}
+	}
+	return filepath.Clean(raw), nil
 }
 
 // validPort reports whether s is a decimal port from 1 to 65535. Only ASCII

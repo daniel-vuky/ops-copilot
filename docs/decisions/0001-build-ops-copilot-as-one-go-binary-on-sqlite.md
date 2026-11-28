@@ -4,7 +4,7 @@ Date: 2026-11-27
 
 ## Status
 
-Amended by [0004](0004-settle-open-points-in-adrs-0001-0003.md)
+Amended by [0004](0004-settle-open-points-in-adrs-0001-0003.md) and [0005](0005-set-conventions-for-the-sqlite-store.md)
 
 ## Context
 

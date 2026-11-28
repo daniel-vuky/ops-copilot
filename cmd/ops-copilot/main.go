@@ -1,6 +1,7 @@
 // Command ops-copilot is the single Ops Copilot binary. With no argument it
-// loads its configuration from the environment and serves the public HTTP
-// port until SIGINT or SIGTERM; "ops-copilot version" prints its version.
+// loads its configuration from the environment, opens the SQLite store in
+// DATA_DIR and serves the public HTTP port until SIGINT or SIGTERM;
+// "ops-copilot version" prints its version.
 package main
 
 import (
@@ -14,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/daniel-vuky/ops-copilot/internal/platform/adapters/httpserver"
+	"github.com/daniel-vuky/ops-copilot/internal/platform/adapters/sqlite"
 	"github.com/daniel-vuky/ops-copilot/internal/platform/config"
 	"github.com/daniel-vuky/ops-copilot/internal/platform/logging"
 )
@@ -49,9 +51,11 @@ func main() {
 
 // run is the whole program behind main, with its inputs and outputs passed
 // in for tests. It serves until ctx is done and returns the exit status: 0
-// after a clean shutdown or "version", 1 for a configuration, listen or
-// shutdown error, 2 for a usage error.
-func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) int {
+// after a clean shutdown or "version", 1 for a configuration error, a store
+// that fails to open (including a schema newer than this binary), a listen
+// error, a shutdown error or a store close error, 2 for a usage error. The
+// store is closed on every path after it opens.
+func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) (code int) {
 	switch {
 	case len(args) == 1 && args[0] == "version":
 		_, _ = fmt.Fprintln(stdout, versionString())
@@ -73,6 +77,21 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	slog.SetDefault(logger)
 	logger.LogAttrs(ctx, slog.LevelInfo, "config loaded",
 		append(cfg.LogAttrs(), slog.String("version", version))...)
+
+	db, err := sqlite.Open(ctx, sqlite.Options{Dir: cfg.DataDir, Logger: logger})
+	if err != nil {
+		logger.LogAttrs(ctx, slog.LevelError, "store open failed", slog.Any("error", err))
+		return exitError
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			logger.LogAttrs(ctx, slog.LevelError, "store close failed", slog.Any("error", err))
+			if code == exitOK {
+				code = exitError
+			}
+		}
+	}()
+	logger.LogAttrs(ctx, slog.LevelInfo, "store opened", slog.String("path", db.Path()))
 
 	var lc net.ListenConfig
 	ln, err := lc.Listen(ctx, "tcp", cfg.ListenAddr)
