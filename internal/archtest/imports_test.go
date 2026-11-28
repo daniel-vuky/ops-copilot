@@ -34,20 +34,32 @@ type violation struct {
 	Reason string // why the import is not allowed
 }
 
-// checkImports walks the internal and cmd trees of fsys and returns every
-// import of a domain package that breaks the rule, in walk (lexical) order.
-// module is the module path from go.mod.
+// walkRoots are the trees checkImports walks. Each must exist.
+var walkRoots = []string{"internal", "cmd", "web"}
+
+// skipPaths are directories below a walk root that are never walked: this
+// package, and the frontend dependencies and build output under web, which
+// hold no Go code of this module.
+var skipPaths = map[string]bool{
+	"internal/archtest": true,
+	"web/node_modules":  true,
+	"web/dist":          true,
+}
+
+// checkImports walks the internal, cmd and web trees of fsys and returns
+// every import of a domain package that breaks the rule, in walk (lexical)
+// order. module is the module path from go.mod.
 func checkImports(fsys fs.FS, module string) ([]violation, error) {
 	var out []violation
 	fset := token.NewFileSet()
 
-	for _, root := range []string{"internal", "cmd"} {
+	for _, root := range walkRoots {
 		err := fs.WalkDir(fsys, root, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
 			if d.IsDir() {
-				if (p != root && skipDir(d.Name())) || p == "internal/archtest" {
+				if (p != root && skipDir(d.Name())) || skipPaths[p] {
 					return fs.SkipDir
 				}
 				return nil
@@ -184,6 +196,13 @@ func TestImportRuleCatchesViolations(t *testing.T) {
 		"internal/billing/testdata/x.go":    goFile("x", "github.com/vendor/sdk"),
 		"internal/billing/notes.txt":        &fstest.MapFile{Data: []byte("not go")},
 		"internal/archtest/fixture_rule.go": goFile("archtest", "github.com/vendor/sdk"),
+		// web is walked with the domain rule; its node_modules and dist are not.
+		"web/embed.go":            goFile("web", "embed", "github.com/vendor/sdk"),
+		"web/embed_test.go":       goFile("web", "github.com/vendor/sdk"),
+		"web/node_modules/x.go":   goFile("x", "github.com/vendor/sdk"),
+		"web/node_modules/p/y.go": goFile("y", "github.com/vendor/sdk"),
+		"web/dist/x.go":           goFile("x", "github.com/vendor/sdk"),
+		"web/dist/app/y.go":       goFile("y", "github.com/vendor/sdk"),
 	}
 
 	got, err := checkImports(fsys, module)
@@ -192,11 +211,12 @@ func TestImportRuleCatchesViolations(t *testing.T) {
 	}
 
 	want := []struct {
-		name, imp, reason string
+		name, file, imp, reason string
 	}{
-		{"adapter subpackage", module + "/internal/billing/adapters/sql", reasonAdapter},
-		{"adapters segment at end", module + "/internal/billing/adapters", reasonAdapter},
-		{"vendor sdk", "github.com/vendor/sdk", reasonThirdParty},
+		{"adapter subpackage", "internal/billing/domain.go", module + "/internal/billing/adapters/sql", reasonAdapter},
+		{"adapters segment at end", "internal/billing/domain.go", module + "/internal/billing/adapters", reasonAdapter},
+		{"vendor sdk", "internal/billing/domain.go", "github.com/vendor/sdk", reasonThirdParty},
+		{"web vendor sdk", "web/embed.go", "github.com/vendor/sdk", reasonThirdParty},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d violations, want %d: %+v", len(got), len(want), got)
@@ -206,8 +226,8 @@ func TestImportRuleCatchesViolations(t *testing.T) {
 			t.Parallel()
 
 			v := got[i]
-			if v.File != "internal/billing/domain.go" {
-				t.Errorf("File = %q, want internal/billing/domain.go", v.File)
+			if v.File != tt.file {
+				t.Errorf("File = %q, want %q", v.File, tt.file)
 			}
 			if v.Import != tt.imp {
 				t.Errorf("Import = %q, want %q", v.Import, tt.imp)
@@ -219,8 +239,8 @@ func TestImportRuleCatchesViolations(t *testing.T) {
 	}
 }
 
-// TestImportRuleReportsMissingRoot checks that a missing internal or cmd
-// directory is an error, not a silent pass.
+// TestImportRuleReportsMissingRoot checks that a missing internal, cmd or
+// web directory is an error, not a silent pass.
 func TestImportRuleReportsMissingRoot(t *testing.T) {
 	t.Parallel()
 
@@ -228,8 +248,9 @@ func TestImportRuleReportsMissingRoot(t *testing.T) {
 		name string
 		fsys fstest.MapFS
 	}{
-		{"no internal", fstest.MapFS{"cmd/app/main.go": goFile("main")}},
-		{"no cmd", fstest.MapFS{"internal/a/a.go": goFile("a")}},
+		{"no internal", fstest.MapFS{"cmd/app/main.go": goFile("main"), "web/embed.go": goFile("web")}},
+		{"no cmd", fstest.MapFS{"internal/a/a.go": goFile("a"), "web/embed.go": goFile("web")}},
+		{"no web", fstest.MapFS{"internal/a/a.go": goFile("a"), "cmd/app/main.go": goFile("main")}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
