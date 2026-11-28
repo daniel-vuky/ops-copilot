@@ -160,12 +160,12 @@ Include the final review's four sections in the PR body.
 | `make toolchain` | Build the pinned toolchain image (other targets build it when missing) |
 | `make lint` | ESLint and `tsc` on `web/`, then golangci-lint |
 | `make test` | Frontend tests (Vitest), then Go tests |
-| `make build` | Vite build into `web/dist/app`, then the static binary into `bin/ops-copilot` |
+| `make build` | Vite build into `web/dist/app`, then the static binary into `bin/ops-copilot`, then checks the embedded UI |
 | `make check` | `lint`, `test`, `build` in that order; stops at the first failure |
 | `make shell` | Interactive bash in the toolchain |
 | `make clean` | Remove `bin` and the build output under `web/dist` |
 
-`lint`, `test` and `build` each run a `-web` half, then a `-go` half (`test` runs `test-web`, then `test-go`). The halves (`lint-web`, `lint-go`, `test-web`, `test-go`, `build-web`, `build-go`, plus `web-deps`) are listed by `make help` and can each be run on their own.
+`lint`, `test` and `build` each run a `-web` half, then a `-go` half (`test` runs `test-web`, then `test-go`); `build` then runs `verify-ui`, which fails unless the binary embeds the built UI. The halves (`lint-web`, `lint-go`, `test-web`, `test-go`, `build-web`, `build-go`, plus `web-deps` and `verify-ui`) are listed by `make help` and can each be run on their own.
 
 - Run `make` from the main checkout, not a git worktree: the toolchain container mounts only the worktree directory and cannot reach the git dir it points to.
 - The toolchain image tag follows the hash of `build/toolchain/Dockerfile`. Old tags stay behind (about 1.7 GB each); remove them with `docker image rm`.

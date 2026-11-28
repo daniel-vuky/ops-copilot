@@ -1,8 +1,9 @@
 // Command ops-copilot is the single Ops Copilot binary. With no argument it
 // loads its configuration from the environment, opens the SQLite store in
 // DATA_DIR, requeues the jobs a previous run left running, and serves the
-// public HTTP port beside the job scheduler until SIGINT or SIGTERM;
-// "ops-copilot version" prints its version.
+// public HTTP port, with the embedded SPA for every UI path, beside the job
+// scheduler until SIGINT or SIGTERM; "ops-copilot version" prints its
+// version.
 package main
 
 import (
@@ -22,6 +23,7 @@ import (
 	"github.com/daniel-vuky/ops-copilot/internal/platform/config"
 	"github.com/daniel-vuky/ops-copilot/internal/platform/jobs"
 	"github.com/daniel-vuky/ops-copilot/internal/platform/logging"
+	"github.com/daniel-vuky/ops-copilot/web"
 )
 
 // version can be set at build time with -ldflags "-X main.version=<v>".
@@ -61,7 +63,9 @@ func main() {
 // error or a store close error, 2 for a usage error. The server and the
 // scheduler run side by side; when either stops, the other is stopped too.
 // The store is closed on every path after it opens, once both have
-// returned.
+// returned. The server serves the SPA embedded by package web; a binary
+// built without a frontend build logs a warning and serves the placeholder
+// page instead.
 func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) (code int) {
 	switch {
 	case len(args) == 1 && args[0] == "version":
@@ -115,8 +119,12 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	}
 	logger.LogAttrs(ctx, slog.LevelInfo, "listening", slog.String("addr", ln.Addr().String()))
 
+	ui := web.App()
+	if ui == nil {
+		logger.LogAttrs(ctx, slog.LevelWarn, "web UI not embedded; serving the placeholder page")
+	}
 	ready := &httpserver.Readiness{}
-	router := httpserver.NewRouter(logger, ready, nil)
+	router := httpserver.NewRouter(logger, ready, httpserver.SPAHandler(ui))
 	srv := httpserver.NewServer(router, ready, logger)
 	serve := func(ctx context.Context) error { return srv.Run(ctx, ln) }
 	if err := runTogether(ctx, serve, sched.Run); err != nil {

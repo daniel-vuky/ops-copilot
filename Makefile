@@ -34,7 +34,7 @@ RUN_ARGS := --rm --init --user $(shell id -u):$(shell id -g) --cap-drop ALL --se
 TTY_WRAP = sh -c 'if test -t 0 && test -t 1; then set -- -it "$$@"; fi; $(1) "$$@"' ops-copilot-run
 RUN := $(call TTY_WRAP,exec docker run) $(RUN_ARGS)
 
-.PHONY: help toolchain .toolchain-ready shell check lint test build web-deps lint-web test-web build-web lint-go test-go build-go clean print-image print-run
+.PHONY: help toolchain .toolchain-ready shell check lint test build web-deps lint-web test-web build-web lint-go test-go build-go verify-ui clean print-image print-run
 
 help: ## Show this help
 	@echo 'Usage: make <target>'
@@ -68,9 +68,10 @@ test: ## Run the frontend tests, then the Go tests
 	$(MAKE) test-web
 	$(MAKE) test-go
 
-build: ## Build the frontend into web/dist/app, then the Go binary
+build: ## Build the frontend into web/dist/app, the Go binary, then check the embedded UI
 	$(MAKE) build-web
 	$(MAKE) build-go
+	$(MAKE) verify-ui
 
 web-deps: .toolchain-ready ## Install the frontend dependencies from the lockfile
 	$(RUN) pnpm -C web install --frozen-lockfile
@@ -103,6 +104,14 @@ test-go: .toolchain-ready ## Run the Go tests
 # CGO_ENABLED=0 comes from RUN and the image env (ADR 0001 §3).
 build-go: .toolchain-ready ## Build the static binary into bin/ops-copilot
 	$(RUN) go build -trimpath -ldflags "-s -w" -o bin/ops-copilot ./cmd/ops-copilot
+
+# Compiles the embedded web/dist into a test binary and serves it through the
+# router: index.html, every file it references and every font the CSS
+# references must answer 200 with the right Content-Type. Without
+# OC_REQUIRE_UI=1 the test skips, so a plain go test passes before any
+# frontend build.
+verify-ui: .toolchain-ready ## Check that the binary embeds the built UI
+	$(RUN) env OC_REQUIRE_UI=1 go test -count=1 -run '^TestEmbeddedUI$$' ./cmd/ops-copilot
 
 # Keeps the tracked web/dist/.gitkeep, so go:embed still has a file to match.
 # The test lets clean succeed when web/dist is absent.
