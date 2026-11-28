@@ -25,7 +25,13 @@ const appDir = "dist/app"
 // root, or nil when the binary embeds no build (no dist/app/index.html), in
 // which case the server shows its placeholder page.
 func App() fs.FS {
-	app, err := fs.Sub(dist, appDir)
+	return appFrom(dist)
+}
+
+// appFrom returns the dist/app sub-tree of fsys, or an untyped nil when it
+// has no index.html.
+func appFrom(fsys fs.FS) fs.FS {
+	app, err := fs.Sub(fsys, appDir)
 	if err != nil {
 		return nil
 	}

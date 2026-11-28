@@ -63,6 +63,29 @@ function runCheckDist(files: Record<string, string>) {
   });
 }
 
+/**
+ * Lays out a fixture web/ directory with the clean build in dist/app plus
+ * files (paths relative to dist/), then runs check-dist from it with no
+ * argument, so the default dist/app and its parent are checked.
+ */
+function runCheckDistDefault(distFiles: Record<string, string>) {
+  fixtureCount += 1;
+  const web = join(fixtureRoot, `case-${fixtureCount}`);
+  const files: Record<string, string> = { ...distFiles };
+  for (const [name, content] of Object.entries(cleanBuild())) {
+    files[`app/${name}`] = content;
+  }
+  for (const [name, content] of Object.entries(files)) {
+    const path = join(web, "dist", name);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, content);
+  }
+  return spawnSync(process.execPath, [checkDist], {
+    cwd: web,
+    encoding: "utf8",
+  });
+}
+
 describe("check-dist", () => {
   it("accepts a clean build", () => {
     const result = runCheckDist(cleanBuild());
@@ -199,6 +222,26 @@ describe("check-dist", () => {
     const result = runCheckDist(files);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(problem);
+    expect(result.stdout).not.toContain("check-dist: ok");
+  });
+
+  // go:embed takes all of web/dist, so with the default directory nothing but
+  // .gitkeep and app/ may sit beside the build.
+  it("accepts the default dist with only .gitkeep and app/", () => {
+    const result = runCheckDistDefault({ ".gitkeep": "" });
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("check-dist: ok (5 files)");
+  });
+
+  it.each([
+    ["a stale file", { ".gitkeep": "", "index-old.js": "x" }, "dist/index-old.js"],
+    ["a dotfile", { ".gitkeep": "", ".DS_Store": "x" }, "dist/.DS_Store"],
+    ["a stray directory", { ".gitkeep": "", "old/index.html": "x" }, "dist/old"],
+  ])("rejects %s beside the default dist/app", (_name, files, problem) => {
+    const result = runCheckDistDefault(files);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`check-dist: ${problem}:`);
     expect(result.stdout).not.toContain("check-dist: ok");
   });
 });

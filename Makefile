@@ -109,9 +109,16 @@ build-go: .toolchain-ready ## Build the static binary into bin/ops-copilot
 # router: index.html, every file it references and every font the CSS
 # references must answer 200 with the right Content-Type. Without
 # OC_REQUIRE_UI=1 the test skips, so a plain go test passes before any
-# frontend build.
-verify-ui: .toolchain-ready ## Check that the binary embeds the built UI
-	$(RUN) env OC_REQUIRE_UI=1 go test -count=1 -run '^TestEmbeddedUI$$' ./cmd/ops-copilot
+# frontend build. The recipe keeps go test's exit status, then also fails
+# unless the -v output shows TestEmbeddedUI passed, so a renamed test, a
+# changed -run pattern or a skip cannot pass silently (POSIX sh only).
+verify-ui: .toolchain-ready ## Check that the Go build embeds the built UI
+	@out=$$($(RUN) env OC_REQUIRE_UI=1 go test -v -count=1 -run '^TestEmbeddedUI$$' ./cmd/ops-copilot 2>&1); status=$$?; \
+	printf '%s\n' "$$out"; \
+	if [ $$status -ne 0 ]; then exit $$status; fi; \
+	if ! printf '%s\n' "$$out" | grep -q '^--- PASS: TestEmbeddedUI '; then \
+		echo 'verify-ui: TestEmbeddedUI did not run and pass' >&2; exit 1; \
+	fi
 
 # Keeps the tracked web/dist/.gitkeep, so go:embed still has a file to match.
 # The test lets clean succeed when web/dist is absent.

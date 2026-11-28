@@ -23,8 +23,9 @@ var allowedThirdParty = map[string]bool{}
 
 // Reasons reported in a violation.
 const (
-	reasonAdapter    = "domain package imports an adapter package"
-	reasonThirdParty = "domain package imports a third-party package"
+	reasonAdapter      = "domain package imports an adapter package"
+	reasonThirdParty   = "domain package imports a third-party package"
+	reasonWebNotStdlib = "web package imports a non-standard-library package"
 )
 
 // violation is one import that breaks the rule.
@@ -76,7 +77,8 @@ func checkImports(fsys fs.FS, module string) ([]violation, error) {
 			if err != nil {
 				return fmt.Errorf("parse %s: %w", p, err)
 			}
-			if root == "cmd" || hasSegment(path.Dir(p), "adapters") {
+			web := root == "web"
+			if root == "cmd" || (!web && hasSegment(path.Dir(p), "adapters")) {
 				return nil
 			}
 
@@ -85,7 +87,11 @@ func checkImports(fsys fs.FS, module string) ([]violation, error) {
 				if err != nil {
 					return fmt.Errorf("%s: import %s: %w", p, spec.Path.Value, err)
 				}
-				if reason := importViolation(imp, module); reason != "" {
+				reason := importViolation(imp, module)
+				if web {
+					reason = webImportViolation(imp, module)
+				}
+				if reason != "" {
 					out = append(out, violation{File: p, Import: imp, Reason: reason})
 				}
 			}
@@ -127,6 +133,17 @@ func importViolation(imp, module string) string {
 	inModule := imp == module || strings.HasPrefix(imp, module+"/")
 	if strings.Contains(first, ".") && !inModule && !allowedThirdParty[imp] {
 		return reasonThirdParty
+	}
+	return ""
+}
+
+// webImportViolation returns why a package under web may not import imp, or
+// "" when the import is allowed. web may use the standard library only: no
+// package of this module and no path whose first segment contains a dot.
+func webImportViolation(imp, module string) string {
+	first, _, _ := strings.Cut(imp, "/")
+	if imp == module || strings.HasPrefix(imp, module+"/") || strings.Contains(first, ".") {
+		return reasonWebNotStdlib
 	}
 	return ""
 }
@@ -196,8 +213,14 @@ func TestImportRuleCatchesViolations(t *testing.T) {
 		"internal/billing/testdata/x.go":    goFile("x", "github.com/vendor/sdk"),
 		"internal/billing/notes.txt":        &fstest.MapFile{Data: []byte("not go")},
 		"internal/archtest/fixture_rule.go": goFile("archtest", "github.com/vendor/sdk"),
-		// web is walked with the domain rule; its node_modules and dist are not.
-		"web/embed.go":            goFile("web", "embed", "github.com/vendor/sdk"),
+		// web is walked with the stdlib-only rule and no adapters exemption;
+		// its node_modules and dist are not walked.
+		"web/embed.go": goFile("web",
+			"embed",
+			module+"/internal/platform/clock",
+			"github.com/vendor/sdk",
+		),
+		"web/adapters/x/x.go":     goFile("x", "github.com/vendor/sdk"),
 		"web/embed_test.go":       goFile("web", "github.com/vendor/sdk"),
 		"web/node_modules/x.go":   goFile("x", "github.com/vendor/sdk"),
 		"web/node_modules/p/y.go": goFile("y", "github.com/vendor/sdk"),
@@ -216,7 +239,9 @@ func TestImportRuleCatchesViolations(t *testing.T) {
 		{"adapter subpackage", "internal/billing/domain.go", module + "/internal/billing/adapters/sql", reasonAdapter},
 		{"adapters segment at end", "internal/billing/domain.go", module + "/internal/billing/adapters", reasonAdapter},
 		{"vendor sdk", "internal/billing/domain.go", "github.com/vendor/sdk", reasonThirdParty},
-		{"web vendor sdk", "web/embed.go", "github.com/vendor/sdk", reasonThirdParty},
+		{"web adapter not exempt", "web/adapters/x/x.go", "github.com/vendor/sdk", reasonWebNotStdlib},
+		{"web module package", "web/embed.go", module + "/internal/platform/clock", reasonWebNotStdlib},
+		{"web vendor sdk", "web/embed.go", "github.com/vendor/sdk", reasonWebNotStdlib},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d violations, want %d: %+v", len(got), len(want), got)

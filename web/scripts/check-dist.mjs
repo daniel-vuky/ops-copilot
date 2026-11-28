@@ -6,13 +6,16 @@
 // caches assets/ as immutable for a year.
 //
 // Usage: node scripts/check-dist.mjs [dir]   (default: dist/app, from web/)
+// With the default directory it also checks dist/ itself: go:embed takes all
+// of web/dist, so nothing but .gitkeep and app/ may sit there.
 // Exits 1 with one line per problem, or prints `check-dist: ok (<n> files)`.
 // Node standard library only.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 
-const dir = process.argv[2] ?? "dist/app";
+const defaultDir = "dist/app";
+const dir = process.argv[2] ?? defaultDir;
 
 // Paths whose name starts with "." anywhere in the build. The server answers
 // 404 for them, so a dotfile in the build is dead weight or a leak
@@ -64,6 +67,23 @@ try {
 } catch (err) {
   console.error(`check-dist: cannot read ${dir}: ${err.message}`);
   process.exit(1);
+}
+
+// The binary embeds web/dist with `all:`, dotfiles included, so a stale or
+// stray entry beside the build would ship in it. Fixture runs pass a
+// directory and skip this.
+if (process.argv[2] === undefined) {
+  const parent = dirname(defaultDir);
+  for (const entry of readdirSync(parent, { withFileTypes: true })) {
+    const allowed =
+      (entry.name === ".gitkeep" && entry.isFile()) ||
+      (entry.name === "app" && entry.isDirectory());
+    if (!allowed) {
+      problems.push(
+        `${parent}/${entry.name}: only .gitkeep and app/ may sit in ${parent}/`,
+      );
+    }
+  }
 }
 
 for (const path of dotted) {
