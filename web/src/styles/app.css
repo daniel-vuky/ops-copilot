@@ -54,6 +54,9 @@ body { margin: 0; }
    Wide screens keep the 340px search box. */
 .oc-topbar .topbar-r { min-width: 0; max-width: 100%; }
 
+/* ---------- Root fallback (no shell) ---------- */
+.oc-root-error { margin: 0; padding: 24px 16px; font-family: var(--font-sans), system-ui, sans-serif; font-size: 14px; color: #11182A; }
+
 /* ---------- Page placeholders ---------- */
 .oc-page .card-b { margin: 0; }
 .oc-page-id { padding-top: 0; }

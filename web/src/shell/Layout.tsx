@@ -1,6 +1,5 @@
 import { useEffect, useRef, type MouseEvent } from "react";
 import { Outlet, useLocation, useMatches, type UIMatch } from "react-router";
-import { ErrorPanel } from "./ErrorPanel";
 import { placeholder } from "./placeholder";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
@@ -34,19 +33,13 @@ function deepestHandle(matches: UIMatch[]): RouteHandle {
   return fallbackHandle;
 }
 
-/** LayoutProps: error is set when the layout renders as the route error element. */
-export type LayoutProps = { error?: boolean };
-
 /**
  * Layout is the app frame: the Sidebar, the Topbar for the current route and
- * the page. As the layout route's error element it shows ErrorPanel in place
- * of the page, so the navigation stays usable.
- *
- * Being its own error element, Layout cannot catch an error thrown by the
- * shell itself. Once the shell reads data (the session in UC-01, the mode in
- * UC-25), an outer static fallback that does not depend on it is needed.
+ * the page. Page errors are caught by the pathless route under it (see
+ * app/router.tsx), so the shell stays mounted and ErrorPanel renders in the
+ * Outlet. Errors in the shell itself fall through to RootError.
  */
-export function Layout({ error = false }: LayoutProps) {
+export function Layout() {
   const { section, title } = deepestHandle(useMatches());
   const { pathname } = useLocation();
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -91,7 +84,7 @@ export function Layout({ error = false }: LayoutProps) {
             user={placeholder.user}
             titleRef={titleRef}
           />
-          {error ? <ErrorPanel /> : <Outlet />}
+          <Outlet />
         </main>
       </div>
     </div>

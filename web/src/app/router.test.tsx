@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   createMemoryRouter,
@@ -11,7 +11,7 @@ import { routes } from "./router";
 /** Renders the app's routes in a memory router at path. */
 function renderAt(path: string, routeList: RouteObject[] = routes) {
   const router = createMemoryRouter(routeList, { initialEntries: [path] });
-  return render(<RouterProvider router={router} />);
+  return { router, ...render(<RouterProvider router={router} />) };
 }
 
 /** The crumb paragraph of the Topbar, or null when the route has no section. */
@@ -66,32 +66,48 @@ describe("error boundary", () => {
     throw new Error("boom-secret-detail");
   }
 
-  /** The app's routes with a throwing child added under the layout route. */
+  /** The app's routes with a throwing page added under the pathless page route. */
   function routesWithThrowingChild(): RouteObject[] {
     const [layout, ...rest] = routes;
+    const [pages, ...otherChildren] = layout.children ?? [];
+    expect(pages.path).toBeUndefined();
+    expect(pages.errorElement).toBeDefined();
     return [
       {
         ...layout,
         children: [
-          { path: "boom", element: <Boom />, handle: { section: "Operate", title: "Boom" } },
-          ...(layout.children ?? []),
+          {
+            ...pages,
+            children: [
+              { path: "boom", element: <Boom />, handle: { section: "Operate", title: "Boom" } },
+              ...(pages.children ?? []),
+            ],
+          } as RouteObject,
+          ...otherChildren,
         ],
       } as RouteObject,
       ...rest,
     ];
   }
 
-  it("renders the error panel inside the shell without the message", () => {
+  /** The Sidebar navigation landmark. */
+  function nav() {
+    return screen.getByRole("navigation", { name: "Main navigation" });
+  }
+
+  it("renders the error panel inside the mounted shell without the message", async () => {
     // React logs the caught render error; silence that one expected log.
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { router } = renderAt("/", routesWithThrowingChild());
+    const navBefore = nav();
 
-    renderAt("/boom", routesWithThrowingChild());
+    await act(() => router.navigate("/boom"));
 
     expect(consoleError).toHaveBeenCalled();
     expect(screen.getByRole("alert")).toHaveTextContent("Something went wrong");
     expect(screen.getByText("Something went wrong")).toBeInTheDocument();
-    const nav = screen.getByRole("navigation", { name: "Main navigation" });
-    expect(within(nav).getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
+    expect(nav()).toBe(navBefore);
+    expect(within(nav()).getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
     expect(screen.queryByText(/boom-secret-detail/)).toBeNull();
     expect(document.body.textContent).not.toContain("boom-secret-detail");
   });
@@ -99,14 +115,29 @@ describe("error boundary", () => {
   it("recovers when a nav link is followed from the error frame", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const user = userEvent.setup();
-
     renderAt("/boom", routesWithThrowingChild());
-    const nav = screen.getByRole("navigation", { name: "Main navigation" });
-    await user.click(within(nav).getByRole("link", { name: "Projects" }));
+    const navBefore = nav();
 
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Projects");
+    await user.click(within(navBefore).getByRole("link", { name: "Projects" }));
+
+    const title = screen.getByRole("heading", { level: 1 });
+    expect(title).toHaveTextContent("Projects");
+    expect(title).toHaveFocus();
+    expect(nav()).toBe(navBefore);
     expect(screen.queryByText("Something went wrong")).toBeNull();
     expect(screen.getByText("This screen is not built yet.")).toBeInTheDocument();
+  });
+
+  it("falls back to a static message when the shell itself fails", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const [layout, ...rest] = routes;
+
+    renderAt("/", [{ ...layout, element: <Boom /> } as RouteObject, ...rest]);
+
+    expect(consoleError).toHaveBeenCalled();
+    expect(screen.getByText("Something went wrong. Reload the page.")).toBeInTheDocument();
+    expect(screen.queryByRole("navigation")).toBeNull();
+    expect(document.body.textContent).not.toContain("boom-secret-detail");
   });
 });
 
