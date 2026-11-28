@@ -218,3 +218,68 @@ func TestCustomUIHandler(t *testing.T) {
 		})
 	}
 }
+
+func TestSecurityHeadersOnEveryResponse(t *testing.T) {
+	t.Parallel()
+
+	// ADR 0002 §6, verbatim: guards the constant against edits.
+	const wantCSP = "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+	if contentSecurityPolicy != wantCSP {
+		t.Fatalf("contentSecurityPolicy = %q, want %q", contentSecurityPolicy, wantCSP)
+	}
+
+	r, _ := newTestRouter(t, true, nil)
+	r.Handle("GET /api/panic", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("boom")
+	}))
+	// A UI path, so recoverPanic answers its text 500.
+	r.Handle("GET /ui-panic", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("boom")
+	}))
+	notReady, _ := newTestRouter(t, false, nil)
+	spa := newSPARouter()
+
+	tests := []struct {
+		name, method, target string
+		router               *Router
+		wantStatus           int
+		wantTypePrefix       string // Content-Type prefix, when not empty
+	}{
+		{"placeholder UI", http.MethodGet, "/", r, http.StatusOK, ""},
+		{"healthz", http.MethodGet, "/healthz", r, http.StatusOK, ""},
+		{"healthz not ready", http.MethodGet, "/healthz", notReady, http.StatusServiceUnavailable, ""},
+		{"JSON 404", http.MethodGet, "/api/x", r, http.StatusNotFound, ""},
+		{"mcp JSON 404", http.MethodGet, "/mcp", r, http.StatusNotFound, ""},
+		{"UI 405", http.MethodPost, "/", r, http.StatusMethodNotAllowed, ""},
+		{"recovered panic", http.MethodGet, "/api/panic", r, http.StatusInternalServerError, ""},
+		{"recovered UI panic", http.MethodGet, "/ui-panic", r, http.StatusInternalServerError, "text/plain"},
+		{"clean-path redirect", http.MethodGet, "/a/../b", r, http.StatusTemporaryRedirect, ""},
+		{"SPA deep link", http.MethodGet, "/investigations/1", spa, http.StatusOK, ""},
+		{"SPA asset", http.MethodGet, "/assets/index-AbC123.js", spa, http.StatusOK, ""},
+		{"SPA missing asset", http.MethodGet, "/assets/gone-1.js", spa, http.StatusNotFound, ""},
+		{"SPA assets dir", http.MethodGet, "/assets/", spa, http.StatusNotFound, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := serve(tt.router, tt.method, tt.target, nil)
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+			h := rec.Header()
+			if tt.wantTypePrefix != "" && !strings.HasPrefix(h.Get("Content-Type"), tt.wantTypePrefix) {
+				t.Errorf("Content-Type = %q, want prefix %q", h.Get("Content-Type"), tt.wantTypePrefix)
+			}
+			if got := h.Get("Content-Security-Policy"); got != contentSecurityPolicy {
+				t.Errorf("Content-Security-Policy = %q, want %q", got, contentSecurityPolicy)
+			}
+			if got := h.Get("X-Content-Type-Options"); got != "nosniff" {
+				t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+			}
+			if got := h.Get("Referrer-Policy"); got != "same-origin" {
+				t.Errorf("Referrer-Policy = %q, want same-origin", got)
+			}
+		})
+	}
+}

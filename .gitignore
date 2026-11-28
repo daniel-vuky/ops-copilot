@@ -12,4 +12,5 @@ docs/superpowers/
 # Build outputs
 /bin/
 /web/node_modules/
-/web/dist/
+/web/dist/*
+!/web/dist/.gitkeep

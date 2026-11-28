@@ -1,0 +1,62 @@
+/* Production overrides and the classes that replace the inline styles of
+   design/ui/Sidebar.dc.html and Topbar.dc.html (the CSP allows no style
+   attributes). Loaded after colors_and_type.css and oc-glass.css. */
+
+/* The bundled fontsource families are named "… Variable"; the tokens stay verbatim. */
+:root {
+  --font-sans: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
+  --font-num: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
+}
+
+body { margin: 0; }
+
+/* ---------- Skip link and focus targets ---------- */
+.oc-skip { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.oc-skip:focus { left: 16px; top: 16px; z-index: 100; width: auto; height: auto; overflow: visible; clip: auto; padding: 10px 14px; border-radius: var(--radius-md, 10px); background: #FFFFFF; color: var(--oc-ink); font-weight: 600; box-shadow: 0 6px 16px rgba(15, 27, 51, 0.2); }
+/* Focused by script after navigation or the skip link; they are not controls. */
+.oc-main:focus, .oc-page-title:focus { outline: none; }
+
+/* ---------- Sidebar ---------- */
+.oc-nav { font-family: var(--font-sans), system-ui, sans-serif; width: 100%; padding: 16px 12px; display: flex; flex-direction: column; gap: 2px; }
+.oc-brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 14px; }
+.oc-brand-mark { position: relative; width: 30px; height: 30px; flex: none; }
+.oc-brand-sq { position: absolute; border-radius: 7px; }
+.oc-brand-sq-blue { left: 0; top: 0; width: 20px; height: 20px; background: linear-gradient(135deg, #4D7BC2, #295CA9); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4); }
+.oc-brand-sq-green { right: 0; bottom: 0; width: 18px; height: 18px; background: linear-gradient(135deg, rgba(122, 200, 113, 0.95), rgba(69, 162, 62, 0.9)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45); }
+.oc-brand-text { display: flex; flex-direction: column; line-height: 1.2; flex: 1 1 auto; }
+.oc-brand-name { font-size: 15px; font-weight: 700; color: #FFFFFF; letter-spacing: -0.01em; }
+.oc-brand-sub { font-size: 12px; color: #A5B4CF; }
+.oc-burger { background: rgba(255, 255, 255, 0.1); color: #FFFFFF; border-color: rgba(255, 255, 255, 0.35); }
+/* .btn:hover (0,2,0) would otherwise turn the button white on white. */
+.oc-burger:hover { background: rgba(255, 255, 255, 0.18); color: #FFFFFF; border-color: rgba(255, 255, 255, 0.5); }
+.oc-nav-group { display: contents; }
+
+.oc-sys { margin-top: 14px; padding: 12px; border-radius: 14px; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1); display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.oc-sys-h { padding: 0 0 2px; }
+.oc-sys-row { display: flex; align-items: center; gap: 8px; }
+.oc-sys-label { color: #DCE5F3; }
+.oc-sys-value { margin-left: auto; color: #C9D5EA; }
+
+.oc-user { display: flex; align-items: center; gap: 10px; padding: 10px 8px; margin-top: 6px; }
+.oc-user-text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; flex: 1 1 auto; }
+.oc-user-name { font-size: 13px; font-weight: 600; color: #FFFFFF; overflow-wrap: anywhere; }
+.oc-user-role { font-size: 12px; color: #A5B4CF; }
+.oc-signout { font-size: 12px; color: #C9D5EA; }
+.oc-signout:disabled { cursor: not-allowed; opacity: 0.6; }
+
+/* ---------- Topbar ---------- */
+.oc-topbar { font-family: var(--font-sans), system-ui, sans-serif; color: var(--oc-ink); }
+.oc-topbar-l { flex: 1 1 240px; min-width: 0; }
+.oc-crumb { margin: 0; }
+/* .topbar-r is a content-sized flex item, so .search's max-width: 100% would
+   not be bounded by the card; let the right group shrink to the line instead.
+   Wide screens keep the 340px search box. */
+.oc-topbar .topbar-r { min-width: 0; max-width: 100%; }
+
+/* ---------- Root fallback (no shell) ---------- */
+.oc-root-error { margin: 0; padding: 24px 16px; font-family: var(--font-sans), system-ui, sans-serif; font-size: 14px; color: #11182A; }
+
+/* ---------- Page placeholders ---------- */
+.oc-page .card-b { margin: 0; }
+.oc-page-id { padding-top: 0; }

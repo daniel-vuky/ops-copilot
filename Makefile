@@ -34,7 +34,7 @@ RUN_ARGS := --rm --init --user $(shell id -u):$(shell id -g) --cap-drop ALL --se
 TTY_WRAP = sh -c 'if test -t 0 && test -t 1; then set -- -it "$$@"; fi; $(1) "$$@"' ops-copilot-run
 RUN := $(call TTY_WRAP,exec docker run) $(RUN_ARGS)
 
-.PHONY: help toolchain .toolchain-ready shell check lint test build web-deps lint-web build-web lint-go test-go build-go clean print-image print-run
+.PHONY: help toolchain .toolchain-ready shell check lint test build web-deps lint-web test-web build-web lint-go test-go build-go verify-ui clean print-image print-run
 
 help: ## Show this help
 	@echo 'Usage: make <target>'
@@ -54,7 +54,7 @@ shell: .toolchain-ready ## Open an interactive bash shell in the toolchain
 
 # Aggregate targets. Order is a recipe of sequential recursive makes, not
 # prerequisites, so make -j cannot reorder or interleave the steps: the
-# frontend goes before Go because the binary will embed web/dist (SU-07).
+# frontend goes before Go because the binary embeds web/dist (ADR 0001 §13).
 check: ## Run lint, test and build, stopping at the first failure
 	$(MAKE) lint
 	$(MAKE) test
@@ -64,13 +64,14 @@ lint: ## Lint the frontend, then the Go code
 	$(MAKE) lint-web
 	$(MAKE) lint-go
 
-# Frontend tests arrive with SU-07; until then test runs the Go tests only.
-test: ## Run the tests
+test: ## Run the frontend tests, then the Go tests
+	$(MAKE) test-web
 	$(MAKE) test-go
 
-build: ## Build the frontend into web/dist, then the Go binary
+build: ## Build the frontend into web/dist/app, the Go binary, then check the embedded UI
 	$(MAKE) build-web
 	$(MAKE) build-go
+	$(MAKE) verify-ui
 
 web-deps: .toolchain-ready ## Install the frontend dependencies from the lockfile
 	$(RUN) pnpm -C web install --frozen-lockfile
@@ -80,7 +81,12 @@ web-deps: .toolchain-ready ## Install the frontend dependencies from the lockfil
 lint-web: web-deps ## Lint and type-check the frontend (ESLint, tsc)
 	$(RUN) pnpm -C web run lint
 
-build-web: web-deps ## Build the frontend into web/dist with Vite
+test-web: web-deps ## Run the frontend tests (Vitest)
+	$(RUN) pnpm -C web run test
+
+# The build ends with scripts/check-dist.mjs, which fails on output the CSP
+# would block or the immutable asset cache would serve stale.
+build-web: web-deps ## Build the frontend into web/dist/app with Vite
 	$(RUN) pnpm -C web run build
 
 # Go's ./... skips web/node_modules only because pnpm's isolated linker puts
@@ -88,7 +94,7 @@ build-web: web-deps ## Build the frontend into web/dist with Vite
 # top-level entries are symlinks (which Go does not follow). Switching to
 # nodeLinker: hoisted or shamefullyHoist would pull .go files from npm
 # packages into ./... . Do not add a web/go.mod to fence it off either: it
-# would break the go:embed of web/dist planned for SU-07.
+# would break the go:embed of web/dist.
 lint-go: .toolchain-ready ## Lint the Go code with golangci-lint
 	$(RUN) golangci-lint run ./...
 
@@ -99,8 +105,27 @@ test-go: .toolchain-ready ## Run the Go tests
 build-go: .toolchain-ready ## Build the static binary into bin/ops-copilot
 	$(RUN) go build -trimpath -ldflags "-s -w" -o bin/ops-copilot ./cmd/ops-copilot
 
-clean: ## Remove build outputs (bin, web/dist)
-	rm -rf bin web/dist
+# Compiles the embedded web/dist into a test binary and serves it through the
+# router: index.html, every file it references, every font the CSS
+# references and every other embedded file must answer 200 with the right
+# (never application/octet-stream) Content-Type. Without
+# OC_REQUIRE_UI=1 the test skips, so a plain go test passes before any
+# frontend build. The recipe keeps go test's exit status, then also fails
+# unless the -v output shows TestEmbeddedUI passed, so a renamed test, a
+# changed -run pattern or a skip cannot pass silently (POSIX sh only).
+verify-ui: .toolchain-ready ## Check that the Go build embeds the built UI
+	@out=$$($(RUN) env OC_REQUIRE_UI=1 go test -v -count=1 -run '^TestEmbeddedUI$$' ./cmd/ops-copilot 2>&1); status=$$?; \
+	printf '%s\n' "$$out"; \
+	if [ $$status -ne 0 ]; then exit $$status; fi; \
+	if ! printf '%s\n' "$$out" | grep -q '^--- PASS: TestEmbeddedUI '; then \
+		echo 'verify-ui: TestEmbeddedUI did not run and pass' >&2; exit 1; \
+	fi
+
+# Keeps the tracked web/dist/.gitkeep, so go:embed still has a file to match.
+# The test lets clean succeed when web/dist is absent.
+clean: ## Remove build outputs (bin, web/dist/*)
+	rm -rf bin
+	[ ! -d web/dist ] || find web/dist -mindepth 1 -maxdepth 1 ! -name .gitkeep -exec rm -rf {} +
 
 # Hidden helpers for scripts and checks.
 print-image:

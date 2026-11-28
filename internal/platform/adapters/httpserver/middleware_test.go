@@ -571,3 +571,24 @@ func TestFlushError(t *testing.T) {
 		}
 	})
 }
+
+func TestSecurityHeadersSetBeforeNext(t *testing.T) {
+	t.Parallel()
+
+	var seen http.Header
+	h := securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		seen = w.Header().Clone()
+	}))
+	serve(h, http.MethodGet, "/", nil)
+
+	want := map[string]string{
+		"Content-Security-Policy": contentSecurityPolicy,
+		"X-Content-Type-Options":  "nosniff",
+		"Referrer-Policy":         "same-origin",
+	}
+	for k, v := range want {
+		if got := seen.Get(k); got != v {
+			t.Errorf("next saw %s = %q, want %q", k, got, v)
+		}
+	}
+}

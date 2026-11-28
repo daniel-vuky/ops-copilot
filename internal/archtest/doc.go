@@ -10,9 +10,13 @@
 // outside this module), unless that package is explicitly allowed. Adapter
 // packages and the commands under cmd/ are exempt. Test files are not checked.
 //
-// The rule walks only internal/ and cmd/. A Go package added later outside
-// them (for example a top-level package for go:embed) must be added to the
-// walk in checkImports, or the rule will not see it.
+// The rule walks internal/, cmd/ and web/, and each must exist. Every
+// package under web/ (the go:embed of the SPA build, ADR 0001 §13) is held to
+// a stricter rule: the standard library only, so no package of this module
+// and no path whose first segment contains a dot, with no exemption for an
+// "adapters" segment. web/node_modules and web/dist are not walked. A Go
+// package added later outside these trees must be added to walkRoots in
+// checkImports, or the rule will not see it.
 //
 // The package has no non-test code; the rule runs as part of go test ./...
 package archtest
