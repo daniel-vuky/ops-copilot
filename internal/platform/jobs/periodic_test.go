@@ -190,6 +190,9 @@ func TestManualAndPeriodShareKey(t *testing.T) {
 	register(t, s, jobs.Kind{Name: "scan", Every: 24 * time.Hour, PeriodKey: "all", Handler: b.handler})
 	mustRecover(t, s)
 
+	// The tick tries the period insert while the manual job is still
+	// queued (periods come before claims); a period skipped by a running
+	// job is TestPeriodSkippedWhileActive.
 	manual := enqueue(t, db, s, "scan", nil, jobs.UniqueKey("all"))
 	s.TickForTest(t.Context())
 	if job := recv(t, b.started, "the manual handler"); job.ID != manual {
@@ -481,4 +484,176 @@ func TestFinishHookFailureThenSweep(t *testing.T) {
 	if last, _ := lastErr.Load().(string); last != "finish not recorded" {
 		t.Errorf("hook's last error on the claim-time path = %q, want finish not recorded", last)
 	}
+}
+
+func TestPeriodFollowsClockSetBack(t *testing.T) {
+	t.Parallel()
+	db, st := openStore(t)
+	clk := newFakeClock()
+	s := newScheduler(t, db, st, clk)
+	register(t, s, jobs.Kind{Name: "hourly", Every: time.Hour, Handler: noop})
+	mustRecover(t, s)
+
+	clk.Advance(2 * time.Hour) // the clock runs two periods ahead
+	tickAndWait(t, s)
+	clk.Advance(-2 * time.Hour) // and is corrected
+	tickAndWait(t, s)
+
+	rows := periodRows(t, db, "hourly")
+	if len(rows) != 2 || !rows[1].periodAt.Equal(testNow) {
+		t.Errorf("period rows = %+v, want a second one for the real period %v", rows, testNow)
+	}
+}
+
+func TestPeriodSkipNotRecorded(t *testing.T) {
+	t.Parallel()
+	db, st := openStore(t)
+	clk := newFakeClock()
+	b := newBlocker(t)
+	s1 := newScheduler(t, db, st, clk)
+	register(t, s1, jobs.Kind{Name: "hourly", Every: time.Hour, Handler: b.handler})
+	mustRecover(t, s1)
+
+	s1.TickForTest(t.Context())
+	recv(t, b.started, "the 12:00 handler")
+	clk.Advance(time.Hour)
+	s1.TickForTest(t.Context()) // 13:00 is skipped: the 12:00 job is active
+	b.unblock()
+	s1.WaitJobsForTest()
+	if rows := periodRows(t, db, "hourly"); len(rows) != 1 {
+		t.Fatalf("period rows after the skip = %+v, want one", rows)
+	}
+
+	// A restart later in the skipped period, with no active job any more,
+	// queues that period's job (ADR 0006 §5).
+	clk.Advance(10 * time.Minute)
+	s2 := newScheduler(t, db, st, clk)
+	register(t, s2, jobs.Kind{Name: "hourly", Every: time.Hour, Handler: noop})
+	mustRecover(t, s2)
+	tickAndWait(t, s2)
+	rows := periodRows(t, db, "hourly")
+	if want := testNow.Add(time.Hour); len(rows) != 2 || !rows[1].periodAt.Equal(want) || rows[1].state != "succeeded" {
+		t.Errorf("period rows after the restart = %+v, want a second one at %v, succeeded", rows, want)
+	}
+}
+
+func TestSweepFailureLeavesRetryToBackoff(t *testing.T) {
+	t.Parallel()
+	db, st := openStore(t)
+	clk := newFakeClock()
+	fs := newFlakyStore(st)
+	tx := &failingWriteTx{Transactor: db}
+	lb := &logBuffer{}
+	s := jobs.New(fs, tx, jobs.Options{Clock: clk, Logger: lb.logger()})
+	register(t, s, jobs.Kind{Name: "work", Handler: noop})
+	mustRecover(t, s)
+	id := enqueue(t, db, s, "work", nil)
+	exec(t, db, "UPDATE jobs SET state = 'running', attempts = 1 WHERE id = ?", id) // held by no process
+
+	// RunningIDs fails: the sweep backs off 1 s, not a sweep interval.
+	fs.failRunningIDs.Store(true)
+	clk.Advance(time.Minute)
+	s.TickForTest(t.Context())
+	s.TickForTest(t.Context())
+	if n := fs.runningIDCalls.Load(); n != 1 {
+		t.Fatalf("RunningIDs calls in backoff = %d, want 1", n)
+	}
+	lines := lb.lines(t, "job scheduler step failed")
+	if len(lines) != 1 || lines[0]["step"] != "sweep" {
+		t.Fatalf("step failed lines = %v, want one for sweep", lines)
+	}
+
+	// 1 s later it runs again; now its Write fails, and it backs off 2 s.
+	fs.failRunningIDs.Store(false)
+	tx.fail.Store(true)
+	clk.Advance(time.Second)
+	s.TickForTest(t.Context())
+	if n := fs.runningIDCalls.Load(); n != 2 {
+		t.Fatalf("RunningIDs calls after the 1 s backoff = %d, want 2", n)
+	}
+	if r := jobRow(t, db, id); r.State != jobs.StateRunning {
+		t.Fatalf("orphan after a failed sweep Write = %q, want running", r.State)
+	}
+
+	tx.fail.Store(false)
+	clk.Advance(time.Second)
+	s.TickForTest(t.Context())
+	if n := fs.runningIDCalls.Load(); n != 2 {
+		t.Errorf("RunningIDs calls 1 s into the 2 s backoff = %d, want still 2", n)
+	}
+	clk.Advance(time.Second)
+	s.TickForTest(t.Context())
+	if r := jobRow(t, db, id); r.State != jobs.StateQueued || r.LastError != "finish not recorded" {
+		t.Errorf("orphan after the backoff = %q last_error %q, want queued, finish not recorded", r.State, r.LastError)
+	}
+}
+
+func TestNoClaimFailureWhileShuttingDown(t *testing.T) {
+	t.Parallel()
+
+	t.Run("claim Write fails", func(t *testing.T) {
+		t.Parallel()
+		db, st := openStore(t)
+		s, fs, lb := newFlakyScheduler(t, db, st, newFakeClock())
+		register(t, s, jobs.Kind{Name: "work", Handler: noop})
+		mustRecover(t, s)
+		id := enqueue(t, db, s, "work", nil)
+
+		// Run's ctx ends inside the claim Write, which then fails.
+		ctx, cancel := context.WithCancel(t.Context())
+		fs.onRunning = cancel
+		fs.failRunning.Store(1)
+		s.TickForTest(ctx)
+		if out := lb.String(); strings.Contains(out, "step failed") {
+			t.Errorf("log after a claim failed while shutting down:\n%s", out)
+		}
+
+		fs.onRunning = nil
+		tickAndWait(t, s) // no backoff: claims at once
+		if r := jobRow(t, db, id); r.State != jobs.StateSucceeded {
+			t.Errorf("job on the next tick = %q, want succeeded", r.State)
+		}
+	})
+
+	t.Run("claim-time hook fails", func(t *testing.T) {
+		t.Parallel()
+		db, st := openStore(t)
+		s, lb := newLoggedScheduler(t, db, st, newFakeClock())
+		var (
+			calls  atomic.Int32
+			cancel context.CancelFunc
+		)
+		register(t, s, jobs.Kind{
+			Name: "work", Handler: noop,
+			OnFailed: func(context.Context, jobs.Job, jobs.Reason, string) error {
+				if calls.Add(1) == 1 {
+					cancel() // Run's ctx ends inside the hook, which then fails
+					return errors.New("owner locked")
+				}
+				return nil
+			},
+		})
+		mustRecover(t, s)
+		id := enqueue(t, db, s, "work", nil)
+		exec(t, db, "UPDATE jobs SET attempts = 3 WHERE id = ?", id)
+
+		var ctx context.Context
+		ctx, cancel = context.WithCancel(t.Context())
+		defer cancel()
+		s.TickForTest(ctx)
+		if out := lb.String(); strings.Contains(out, "step failed") || strings.Contains(out, "hook failed") {
+			t.Errorf("log after a hook failed while shutting down:\n%s", out)
+		}
+		if r := jobRow(t, db, id); r.State != jobs.StateQueued {
+			t.Fatalf("job after the cancelled tick = %q, want queued", r.State)
+		}
+
+		tickAndWait(t, s) // no hook backoff: the hook runs again at once
+		if r := jobRow(t, db, id); r.State != jobs.StateFailed {
+			t.Errorf("job on the next tick = %q, want failed", r.State)
+		}
+		if n := calls.Load(); n != 2 {
+			t.Errorf("hook calls = %d, want 2", n)
+		}
+	})
 }

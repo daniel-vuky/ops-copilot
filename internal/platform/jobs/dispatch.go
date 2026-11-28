@@ -63,7 +63,9 @@ func (s *Scheduler) tick(ctx context.Context) {
 // per kind, inserting with the period and the kind's PeriodKey. A period
 // that already has its job, or whose key is held by an active job, inserts
 // nothing; either way the period is remembered, so it is skipped and not
-// retried. A failed insert backs off that kind's step only.
+// retried. Any change of period counts, backwards too: when a clock that
+// ran ahead is set back, the real current period is queued at once. A
+// failed insert backs off that kind's step only.
 func (s *Scheduler) ensurePeriods(ctx context.Context) {
 	now := s.clock.Now()
 	for _, k := range s.recurringKinds() {
@@ -73,7 +75,7 @@ func (s *Scheduler) ensurePeriods(ctx context.Context) {
 		p := periodStart(now, k.kind.Every, k.kind.Offset)
 		step := periodsStep(k.kind.Name)
 		s.mu.Lock()
-		due := p.After(k.lastPeriod) && s.stepReady(step, now)
+		due := !p.Equal(k.lastPeriod) && s.stepReady(step, now)
 		s.mu.Unlock()
 		if !due {
 			continue
@@ -94,9 +96,7 @@ func (s *Scheduler) ensurePeriods(ctx context.Context) {
 			continue
 		}
 		s.mu.Lock()
-		if p.After(k.lastPeriod) {
-			k.lastPeriod = p
-		}
+		k.lastPeriod = p
 		s.stepSucceeded(step)
 		s.mu.Unlock()
 	}
@@ -384,13 +384,14 @@ func (s *Scheduler) release(e *jobEntry) {
 // hookSkip returns the ids of the jobs whose claim-time hook backoff has
 // not run out at now.
 //
-// It also prunes entries that ran out more than the longest hook backoff
-// ago. An entry runs out and its job is claimed again at the next tick
-// with a free slot, so a live entry is renewed long before that; a stale
-// one belongs to a job that left the queue another way. That happens when
-// Cancel commits between a claim Write whose hook failed and its
-// backOffHook call: Cancel deletes the entry, then backOffHook creates it
-// again for a job that is no longer queued.
+// It also prunes entries that ran out more than twice the longest hook
+// backoff ago. Such an entry mostly belongs to a job that left the queue
+// another way: when Cancel commits between a claim Write whose hook failed
+// and its backOffHook call, Cancel deletes the entry and backOffHook then
+// creates it again for a job that is no longer queued. A job still queued
+// is retried at the first tick after its entry runs out where its kind
+// has a free slot; if the kind has had none for that long, pruning only
+// restarts the job's backoff at its first step, which is harmless.
 func (s *Scheduler) hookSkip(now time.Time) []int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -400,7 +401,7 @@ func (s *Scheduler) hookSkip(now time.Time) []int64 {
 		switch {
 		case r.until.After(now):
 			ids = append(ids, id)
-		case now.Sub(r.until) > s.t.hookBackoffMax:
+		case now.Sub(r.until) > 2*s.t.hookBackoffMax:
 			delete(s.hookBackoff, id)
 		}
 	}

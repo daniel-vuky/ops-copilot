@@ -207,9 +207,15 @@ type flakyStore struct {
 	// succeedCalls, when not nil, gets a value (without blocking) on each
 	// MarkSucceeded call.
 	succeedCalls chan struct{}
-	// onDue, when not nil, runs in each DueKinds call. Set it before the
-	// tick that uses it, on the goroutine that ticks.
-	onDue func()
+	// onDue and onRunning, when not nil, run in each DueKinds and
+	// MarkRunning call. Set them before the tick that uses them, on the
+	// goroutine that ticks.
+	onDue     func()
+	onRunning func()
+	// failRunningIDs makes RunningIDs fail while set; runningIDCalls
+	// counts its calls.
+	failRunningIDs atomic.Bool
+	runningIDCalls atomic.Int64
 }
 
 // newFlakyStore returns a flakyStore on st that fails nothing yet.
@@ -231,10 +237,22 @@ func (f *flakyStore) DueKinds(ctx context.Context, now time.Time, skip []int64) 
 
 // MarkRunning fails while failRunning is above zero.
 func (f *flakyStore) MarkRunning(ctx context.Context, id int64, now time.Time) (bool, error) {
+	if f.onRunning != nil {
+		f.onRunning()
+	}
 	if f.failRunning.Add(-1) >= 0 {
 		return false, errInjected
 	}
 	return f.JobStore.MarkRunning(ctx, id, now)
+}
+
+// RunningIDs counts the call and fails while failRunningIDs is set.
+func (f *flakyStore) RunningIDs(ctx context.Context) ([]int64, error) {
+	f.runningIDCalls.Add(1)
+	if f.failRunningIDs.Load() {
+		return nil, errInjected
+	}
+	return f.JobStore.RunningIDs(ctx)
 }
 
 // MarkSucceeded signals the call and fails for the job failSucceed names.

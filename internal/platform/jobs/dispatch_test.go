@@ -1362,3 +1362,44 @@ func TestHookBackoffCap(t *testing.T) {
 		t.Errorf("hook calls after the 30 min cap = %d, want %d", n, calls+1)
 	}
 }
+
+func TestHookSkipPrunesStaleEntry(t *testing.T) {
+	t.Parallel()
+	db, st := openStore(t)
+	clk := newFakeClock()
+	s := newScheduler(t, db, st, clk)
+	b := newBlocker(t)
+	var exhausted int64
+	rec := &hookRecorder{fail: func(job jobs.Job) error {
+		if job.ID == exhausted {
+			return errors.New("owner locked")
+		}
+		return nil
+	}}
+	register(t, s, jobs.Kind{Name: "work", Concurrency: 1, Handler: b.handler, OnFailed: rec.hook})
+	mustRecover(t, s)
+
+	exhausted = enqueue(t, db, s, "work", nil)
+	exec(t, db, "UPDATE jobs SET attempts = 3 WHERE id = ?", exhausted)
+	tickAndWait(t, s) // hook fails: backoff 1 min, then 2 min
+	if n := rec.callsFor(exhausted); n != 1 {
+		t.Fatalf("hook calls = %d, want 1", n)
+	}
+
+	// Another job holds the only slot until long after the backoff ran out.
+	enqueue(t, db, s, "work", nil)
+	s.TickForTest(t.Context())
+	recv(t, b.started, "the slot holder")
+	clk.Advance(62 * time.Minute) // over 2 × 30 min past the backoff's end
+	s.TickForTest(t.Context())    // prunes the entry; no free slot
+	b.unblock()
+	s.WaitJobsForTest()
+
+	// The pruned job starts its backoff over: 1 min, not 2.
+	tickAndWait(t, s)
+	clk.Advance(time.Minute)
+	tickAndWait(t, s)
+	if n := rec.callsFor(exhausted); n != 3 {
+		t.Errorf("hook calls = %d, want 3 (backoff restarted at 1 min after the prune)", n)
+	}
+}
