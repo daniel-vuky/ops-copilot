@@ -55,15 +55,20 @@ var contentTypes = map[string]string{
 // hashed files under assets/ and the unhashed public files. A nil fsys serves
 // the built-in placeholder page instead.
 //
+// A file is served only at its canonical path, the one that cleanPath leaves
+// unchanged. The mux cleans every path except a trailing slash, but an
+// escaped slash (%2f) decodes after it has looked, so a path such as
+// /assets/x%2f..%2findex.js arrives unclean and must not alias a file.
+//
 //   - /assets/<file> serves the file with a one-year immutable Cache-Control,
-//     or a text 404 with no-store when it is missing, a segment starts with
-//     ".", the path ends in "/" or the cleaned path leaves /assets/.
-//     /assets/ itself is a 404; /assets is the app.
-//   - A path whose first segment starts with "." is a text 404 with no-store:
-//     never the file, never the app.
+//     or a text 404 with no-store when it is missing, not canonical (a
+//     trailing slash, an escaped dot segment) or has a segment starting with
+//     ".". /assets/ itself is a 404; /assets is the app.
+//   - A path whose first segment starts with ".", before or after cleaning,
+//     is a text 404 with no-store: never the file, never the app.
 //   - /<file> naming a regular file at the root of fsys (other than
-//     index.html) serves it with a one-hour Cache-Control. With a trailing
-//     slash (/<file>/) it is the app, never the file.
+//     index.html) serves it with a one-hour Cache-Control. Any other spelling
+//     of it, such as /<file>/, is the app, never the file.
 //   - Every other path serves index.html with no-store, so client-side routes
 //     work as deep links.
 //
@@ -74,28 +79,27 @@ func SPAHandler(fsys fs.FS) http.Handler {
 		return placeholderUI()
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The mux has cleaned the path except for a trailing slash, so the
-		// raw prefix decides the branch: "/assets/" is an asset path (and a
-		// 404), "/assets" is the app.
-		if strings.HasPrefix(r.URL.Path, spaAssetsPrefix) {
-			p := cleanPath(r.URL.Path)
-			// An escaped slash such as /assets/..%2ffavicon.svg reaches
-			// here unclean; refuse anything that cleans to outside assets/.
-			// A trailing slash would alias the file under a second URL.
-			if !strings.HasPrefix(p, spaAssetsPrefix) || hasDotSegment(p) || strings.HasSuffix(r.URL.Path, "/") ||
-				serveFile(w, r, fsys, strings.TrimPrefix(p, "/"), cacheImmutable) != nil {
+		raw := r.URL.Path
+		// The raw prefix decides the branch: "/assets/" is an asset path
+		// (and a 404), "/assets" is the app.
+		if strings.HasPrefix(raw, spaAssetsPrefix) {
+			// Only the canonical path serves a file, so neither a trailing
+			// slash nor an escaped dot segment can alias one.
+			if cleanPath(raw) != raw || hasDotSegment(raw) ||
+				serveFile(w, r, fsys, strings.TrimPrefix(raw, "/"), cacheImmutable) != nil {
 				spaNotFound(w)
 			}
 			return
 		}
 
-		name := strings.TrimPrefix(cleanPath(r.URL.Path), "/")
+		name := strings.TrimPrefix(cleanPath(raw), "/")
 		first, _, nested := strings.Cut(name, "/")
-		if strings.HasPrefix(first, ".") {
+		rawFirst, _, _ := strings.Cut(strings.TrimPrefix(raw, "/"), "/")
+		if strings.HasPrefix(first, ".") || strings.HasPrefix(rawFirst, ".") {
 			spaNotFound(w)
 			return
 		}
-		rootFile := !nested && name != "" && name != spaIndex && !strings.HasSuffix(r.URL.Path, "/")
+		rootFile := !nested && name != "" && name != spaIndex && raw == "/"+name
 		if rootFile && serveFile(w, r, fsys, name, cachePublicFile) == nil {
 			return
 		}

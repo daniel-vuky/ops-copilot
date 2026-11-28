@@ -40,7 +40,7 @@ func TestSPADeepLinksServeIndex(t *testing.T) {
 	t.Parallel()
 
 	r := newSPARouter()
-	for _, target := range []string{"/", "/index.html", "/favicon.svg/", "/investigations/1", "/knowledge/documents/x", "/cve/findings/9", "/mcp/x", "/assets"} {
+	for _, target := range []string{"/", "/index.html", "/favicon.svg/", "/favicon.svg%2f.", "/investigations/1", "/knowledge/documents/x", "/cve/findings/9", "/mcp/x", "/assets"} {
 		t.Run(target, func(t *testing.T) {
 			t.Parallel()
 
@@ -96,7 +96,7 @@ func TestSPAMissingAssetIs404NoStore(t *testing.T) {
 	t.Parallel()
 
 	r := newSPARouter()
-	for _, target := range []string{"/assets/gone-1.js", "/assets/", "/assets/..%2ffavicon.svg", "/assets/..%2findex.html", "/assets/.hidden.js", "/assets/index-AbC123.js/"} {
+	for _, target := range []string{"/assets/gone-1.js", "/assets/", "/assets/..%2ffavicon.svg", "/assets/..%2findex.html", "/assets/.hidden.js", "/assets/index-AbC123.js/", "/assets/index-AbC123.js%2f.", "/assets/x%2f..%2findex-AbC123.js"} {
 		t.Run(target, func(t *testing.T) {
 			t.Parallel()
 
@@ -140,7 +140,7 @@ func TestSPARootPublicFile(t *testing.T) {
 		}
 	})
 
-	for _, target := range []string{"/.hidden", "/.env", "/.git/config"} {
+	for _, target := range []string{"/.hidden", "/.env", "/.git/config", "/.x%2f..%2ffavicon.svg"} {
 		t.Run(target, func(t *testing.T) {
 			t.Parallel()
 
@@ -151,7 +151,7 @@ func TestSPARootPublicFile(t *testing.T) {
 			if got := rec.Header().Get("Cache-Control"); got != noStore {
 				t.Errorf("Cache-Control = %q, want %q", got, noStore)
 			}
-			if got := body(t, rec); got == hiddenData || got == indexData {
+			if got := body(t, rec); got == hiddenData || got == indexData || got == faviconData {
 				t.Errorf("body = %q, want neither the file nor the app", got)
 			}
 		})
