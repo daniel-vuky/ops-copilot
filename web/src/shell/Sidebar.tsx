@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { NavLink } from "react-router";
+import { NavLink, useLocation } from "react-router";
 import { navGroups } from "./nav";
 
 /** The System panel rows. No health API exists yet, so none shows a state. */
@@ -13,11 +13,16 @@ export type SidebarProps = {
 /**
  * Sidebar is the main navigation (design/ui/Sidebar.dc.html): the brand, the
  * Operate and Configure links, the System panel and the user block. On narrow
- * screens the Menu button shows the list; following a link closes it.
+ * screens the Menu button shows the list; any navigation closes it.
  */
 export function Sidebar({ user }: SidebarProps) {
-  const [open, setOpen] = useState(false);
-  const close = () => setOpen(false);
+  const location = useLocation();
+  // The key of the location the menu was opened at. Every navigation (a nav
+  // link, the Topbar search, an in-page link, back or forward) brings a new
+  // key, so the menu is open only until the location changes, with no effect.
+  const [openedAt, setOpenedAt] = useState<string | null>(null);
+  const open = openedAt === location.key;
+  const close = () => setOpenedAt(null);
 
   return (
     <nav className="glass-dark oc-nav" aria-label="Main navigation">
@@ -35,7 +40,7 @@ export function Sidebar({ user }: SidebarProps) {
           type="button"
           aria-expanded={open ? "true" : "false"}
           aria-controls="oc-nav-list"
-          onClick={() => setOpen(!open)}
+          onClick={() => setOpenedAt(open ? null : location.key)}
         >
           Menu
         </button>

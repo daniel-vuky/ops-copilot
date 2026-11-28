@@ -2,8 +2,9 @@
 //
 // The CSP is `default-src 'self'; img-src 'self' data:; ...`, so the build
 // must hold no inline script or style, no other origin and no data: fonts,
-// and every file under assets/ must be content-hashed, because the server
-// caches assets/ as immutable for a year.
+// every file under assets/ must be content-hashed, because the server
+// caches assets/ as immutable for a year, and every file must sit at the root
+// or under assets/, the only paths the server serves.
 //
 // Usage: node scripts/check-dist.mjs [dir]   (default: dist/app, from web/)
 // With the default directory it also checks dist/ itself: go:embed takes all
@@ -120,6 +121,11 @@ for (const file of files) {
   }
   if (rel.startsWith("assets/") && !hashed.test(rel)) {
     problems.push(`${rel}: asset name has no content hash`);
+  }
+  // The server serves only files at the root and under assets/; any other
+  // path (public/img/logo.png -> img/logo.png) would answer index.html.
+  if (rel.includes("/") && !rel.startsWith("assets/")) {
+    problems.push(`${rel}: not servable (only root files and assets/ are served)`);
   }
 }
 

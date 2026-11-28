@@ -176,3 +176,69 @@ describe("focus", () => {
     expect(main).toHaveFocus();
   });
 });
+
+describe("collapsed menu", () => {
+  /** The Menu button of the Sidebar. */
+  function menu() {
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    return within(nav).getByRole("button", { name: "Menu" });
+  }
+
+  /** Renders the app at path and opens the collapsed menu. */
+  async function openAt(path: string) {
+    const user = userEvent.setup();
+    const rendered = renderAt(path);
+    await user.click(menu());
+    expect(menu()).toHaveAttribute("aria-expanded", "true");
+    expect(document.querySelector("#oc-nav-list")).toHaveClass("nav-open");
+    return { user, ...rendered };
+  }
+
+  /** Checks that the menu is closed. */
+  function expectClosed() {
+    expect(menu()).toHaveAttribute("aria-expanded", "false");
+    expect(menu()).toHaveAttribute("aria-controls", "oc-nav-list");
+    expect(document.querySelector("#oc-nav-list")).not.toHaveClass("nav-open");
+  }
+
+  it("closes after a Topbar search", async () => {
+    const { user } = await openAt("/");
+    await user.type(screen.getByRole("searchbox", { name: "Search documents" }), "runbook{Enter}");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Knowledge");
+    expectClosed();
+  });
+
+  it("closes after an in-page link", async () => {
+    const { user } = await openAt("/nope");
+    await user.click(screen.getByRole("link", { name: "Go to the dashboard" }));
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Dashboard");
+    expectClosed();
+  });
+
+  it("closes after back and forward", async () => {
+    const { router } = renderAt("/");
+    await act(() => router.navigate("/cve"));
+    const user = userEvent.setup();
+    await user.click(menu());
+    expect(menu()).toHaveAttribute("aria-expanded", "true");
+    await act(() => router.navigate(-1));
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Dashboard");
+    expectClosed();
+
+    await user.click(menu());
+    expect(menu()).toHaveAttribute("aria-expanded", "true");
+    await act(() => router.navigate(1));
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("CVE");
+    expectClosed();
+  });
+
+  it("still closes on a nav link and toggles with the Menu button", async () => {
+    const { user } = await openAt("/");
+    await user.click(menu());
+    expectClosed();
+    await user.click(menu());
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    await user.click(within(nav).getByRole("link", { name: "Settings" }));
+    expectClosed();
+  });
+});

@@ -214,6 +214,13 @@ describe("check-dist", () => {
       },
       'assets/.DS_Store: name starts with "."',
     ],
+    [
+      "a public file in a sub-directory",
+      (f) => {
+        f["img/logo.png"] = "PNG";
+      },
+      "img/logo.png: not servable (only root files and assets/ are served)",
+    ],
   ];
 
   it.each(broken)("rejects %s", (_name, breakIt, problem) => {
@@ -298,6 +305,18 @@ describe("ESLint guards", () => {
 
   it.each(forbidden)("reports %s", async (_name, code, message) => {
     expect(await report(code)).toContain(`no-restricted-syntax: ${message}`);
+  });
+
+  // The guards cover plain JavaScript under src/ too, so a .jsx file cannot
+  // slip past them.
+  it("reports dangerouslySetInnerHTML in a .jsx file", async () => {
+    const [result] = await eslint.lintText(
+      "export const A = (s) => <div dangerouslySetInnerHTML={{ __html: s }} />;\n",
+      { filePath: "src/x.jsx" },
+    );
+    expect(result.messages.map((m) => `${m.ruleId}: ${m.message}`)).toContain(
+      `no-restricted-syntax: ${asText}`,
+    );
   });
 
   it("accepts text rendered as text", async () => {
