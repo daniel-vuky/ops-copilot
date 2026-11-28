@@ -1390,16 +1390,160 @@ func TestHookSkipPrunesStaleEntry(t *testing.T) {
 	enqueue(t, db, s, "work", nil)
 	s.TickForTest(t.Context())
 	recv(t, b.started, "the slot holder")
-	clk.Advance(62 * time.Minute) // over 2 × 30 min past the backoff's end
-	s.TickForTest(t.Context())    // prunes the entry; no free slot
+	// Over 2 × 30 min past the backoff's end, the tick prunes the entry and
+	// retries the hook without a free slot; it fails again.
+	clk.Advance(62 * time.Minute)
+	s.TickForTest(t.Context())
 	b.unblock()
 	s.WaitJobsForTest()
 
-	// The pruned job starts its backoff over: 1 min, not 2.
+	// The pruned job started its backoff over: 1 min, not 2.
 	tickAndWait(t, s)
 	clk.Advance(time.Minute)
 	tickAndWait(t, s)
 	if n := rec.callsFor(exhausted); n != 3 {
 		t.Errorf("hook calls = %d, want 3 (backoff restarted at 1 min after the prune)", n)
+	}
+}
+
+func TestHookBackoffFollowsClockSetBack(t *testing.T) {
+	t.Parallel()
+	db, st := openStore(t)
+	clk := newFakeClock()
+	s := newScheduler(t, db, st, clk)
+	rec := &hookRecorder{fail: func(jobs.Job) error { return errors.New("owner locked") }}
+	register(t, s, jobs.Kind{Name: "work", Handler: noop, OnFailed: rec.hook})
+	mustRecover(t, s)
+
+	// Due since long before the clock is set back.
+	id := enqueue(t, db, s, "work", nil, jobs.RunAfter(testNow.Add(-2*time.Hour)))
+	exec(t, db, "UPDATE jobs SET attempts = 3 WHERE id = ?", id)
+	tickAndWait(t, s) // the hook fails: backoff 1 min
+	rec.mu.Lock()
+	rec.fail = nil
+	rec.mu.Unlock()
+	clk.Advance(-time.Hour)
+
+	// The backoff now ends further away than its 30 min maximum: the job
+	// is tried again at once.
+	tickAndWait(t, s)
+	if r := jobRow(t, db, id); r.State != jobs.StateFailed {
+		t.Errorf("job = %q, want failed", r.State)
+	}
+	if n := rec.callsFor(id); n != 2 {
+		t.Errorf("hook calls = %d, want 2", n)
+	}
+}
+
+func TestExhaustedJobFailsWithoutFreeSlot(t *testing.T) {
+	t.Parallel()
+	db, st := openStore(t)
+	tx := &countingTx{Transactor: db}
+	s, lb := newLoggedSchedulerTx(t, st, tx, newFakeClock())
+	b := newBlocker(t)
+	rec := &hookRecorder{}
+	register(t, s, jobs.Kind{Name: "work", Concurrency: 1, Handler: b.handler, OnFailed: rec.hook})
+	mustRecover(t, s)
+
+	enqueue(t, db, s, "work", nil)
+	s.TickForTest(t.Context())
+	recv(t, b.started, "the slot holder")
+
+	// A job waiting for the slot takes no Write while the slot is held.
+	waiting := enqueue(t, db, s, "work", nil)
+	tx.writes.Store(0)
+	s.TickForTest(t.Context())
+	if n := tx.writes.Load(); n != 0 {
+		t.Errorf("Writes of a tick with the slot held and nothing exhausted = %d, want 0", n)
+	}
+
+	// A job requeued after its last attempt does not wait for the slot.
+	exhausted := enqueue(t, db, s, "work", nil)
+	exec(t, db, "UPDATE jobs SET attempts = 3, last_error = 'boom' WHERE id = ?", exhausted)
+	s.TickForTest(t.Context())
+	if r := jobRow(t, db, exhausted); r.State != jobs.StateFailed || r.LastError != "boom" || r.FinishedAt == nil {
+		t.Errorf("exhausted job = %q last_error %q finished %v, want failed, boom, set", r.State, r.LastError, r.FinishedAt)
+	}
+	calls := rec.list()
+	if len(calls) != 1 || calls[0].job.ID != exhausted || calls[0].reason != jobs.ReasonFailed || !calls[0].inWrite {
+		t.Errorf("OnFailed calls = %+v, want one ReasonFailed call for job %d in the Write", calls, exhausted)
+	}
+	if lines := lb.lines(t, "job failed: attempts exhausted after restart"); len(lines) != 1 || lines[0]["id"] != float64(exhausted) {
+		t.Errorf("attempts exhausted lines = %v, want one for job %d", lines, exhausted)
+	}
+	if r := jobRow(t, db, waiting); r.State != jobs.StateQueued || r.Attempts != 0 {
+		t.Errorf("waiting job = %q attempts %d, want queued, 0", r.State, r.Attempts)
+	}
+	b.unblock()
+	s.WaitJobsForTest()
+}
+
+func TestClaimHookSwallowedFailureDoesNotBlockKind(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		// fail breaks the hook's transaction and drops the error.
+		fail func(ctx context.Context, db *sqlite.DB) error
+	}{
+		{
+			name: "nested write failed",
+			fail: func(ctx context.Context, db *sqlite.DB) error {
+				_ = db.Write(ctx, func(context.Context) error { return errors.New("owner write failed") })
+				return nil
+			},
+		},
+		{
+			name: "transaction lost",
+			fail: func(ctx context.Context, db *sqlite.DB) error {
+				q, err := db.WriteTx(ctx)
+				if err != nil {
+					return err
+				}
+				ended, cancel := context.WithCancel(ctx)
+				cancel()
+				// A statement failing under an ended context loses the
+				// transaction.
+				_, _ = q.ExecContext(ended, "SELECT 1")
+				return nil
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			db, st := openStore(t)
+			s, lb := newLoggedScheduler(t, db, st, newFakeClock())
+			var exhausted int64
+			register(t, s, jobs.Kind{
+				Name:    "work",
+				Handler: noop,
+				OnFailed: func(ctx context.Context, job jobs.Job, _ jobs.Reason, _ string) error {
+					if job.ID == exhausted {
+						return tt.fail(ctx, db)
+					}
+					return nil
+				},
+			})
+			mustRecover(t, s)
+
+			exhausted = enqueue(t, db, s, "work", nil)
+			exec(t, db, "UPDATE jobs SET attempts = 3 WHERE id = ?", exhausted)
+			next := enqueue(t, db, s, "work", nil)
+			tickAndWait(t, s)
+
+			if r := jobRow(t, db, next); r.State != jobs.StateSucceeded {
+				t.Errorf("next job = %q, want succeeded (the kind is not blocked)", r.State)
+			}
+			if r := jobRow(t, db, exhausted); r.State != jobs.StateQueued {
+				t.Errorf("exhausted job = %q, want queued (hook backoff)", r.State)
+			}
+			lines := lb.lines(t, "job failure hook failed")
+			if len(lines) != 1 || lines[0]["id"] != float64(exhausted) {
+				t.Errorf("job failure hook failed lines = %v, want one for job %d", lines, exhausted)
+			}
+			if lines := lb.lines(t, "job scheduler step failed"); len(lines) != 0 {
+				t.Errorf("step failed lines = %v, want none", lines)
+			}
+		})
 	}
 }

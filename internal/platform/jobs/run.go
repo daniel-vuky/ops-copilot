@@ -48,6 +48,9 @@ func (s *Scheduler) runJob(e *jobEntry) {
 		if !returned {
 			herr, stack = errHandlerExited, nil
 		}
+		s.mu.Lock()
+		e.returned = true
+		s.mu.Unlock()
 		if f := s.seams.beforeFinish; f != nil {
 			f(e.job)
 		}
@@ -89,7 +92,9 @@ func (s *Scheduler) callHandler(e *jobEntry) (stack []byte, err error) {
 }
 
 // finish records the end of e's attempt with handler error herr (and the
-// panic stack, if any), then frees e's slot and nudges the dispatcher.
+// panic stack, if any), then frees e's slot and nudges the dispatcher. A
+// recorded finish frees the slot before it is logged, so an Enqueue
+// waiting on the writer finds the slot free as soon as it can.
 //
 // Each try is one Write with a context detached from shutdown, bounded by
 // the finish timeout; there are three tries (at once, +1 s, +5 s). Once
@@ -100,7 +105,7 @@ func (s *Scheduler) callHandler(e *jobEntry) (stack []byte, err error) {
 // until the orphan sweep requeues it.
 func (s *Scheduler) finish(e *jobEntry, herr error, stack []byte) {
 	defer func() {
-		s.release(e)
+		s.release(e) // does nothing once the recorded finish released it
 		s.wake()
 	}()
 
@@ -115,6 +120,7 @@ func (s *Scheduler) finish(e *jobEntry, herr error, stack []byte) {
 		}
 		res, err := s.recordFinish(e, herr, text)
 		if err == nil {
+			s.release(e)
 			s.logFinish(e, res, text, stack)
 			return
 		}
@@ -207,6 +213,11 @@ func (s *Scheduler) recordFinish(e *jobEntry, herr error, text string) (finishRe
 // job is retried while it has attempts left and the error is not
 // Permanent, and fails otherwise. The kind's own Timeout is an ordinary
 // error.
+//
+// It runs again on every finish try, so the outcome can change between
+// tries: a failure whose first try failed before the drain deadline may be
+// recorded as "interrupted by shutdown" by a later try past it (the
+// attempt stays counted either way).
 func (s *Scheduler) decide(e *jobEntry, herr error, stopped bool, now time.Time) finishResult {
 	res := finishResult{now: now}
 	switch {
@@ -282,9 +293,9 @@ func (s *Scheduler) logFinish(e *jobEntry, res finishResult, text string, stack 
 // the claim may still roll back, or the finish may be lost. It returns
 // false when this process holds no such job of that kind, or the job's
 // finish is already being written; if the row is still queued or running
-// then, re-read it and call Cancel again. Owners that must not run again
-// record "cancel requested" in their own row, and their handler checks it
-// (ADR 0006 §1: delivery is at least once).
+// then, re-read it with Get and call Cancel again. Owners that must not
+// run again record "cancel requested" in their own row, and their handler
+// checks it (ADR 0006 §1: delivery is at least once).
 //
 // Protocol (ADR 0006 §3): call Cancel inside the domain's Write; on
 // ErrNotCancellable, call Stop after that Write commits.

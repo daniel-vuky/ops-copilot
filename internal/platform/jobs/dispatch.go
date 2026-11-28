@@ -2,11 +2,19 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
 	"time"
+
+	"github.com/daniel-vuky/ops-copilot/internal/platform/store"
 )
+
+// errHookEndedTx is the error of a claim-time FailedHook that returned nil
+// although its transaction had ended (a statement in it lost the
+// transaction).
+var errHookEndedTx = errors.New("failure hook returned nil after its transaction ended")
 
 // claimResult says what one claim did.
 type claimResult int
@@ -147,10 +155,15 @@ func (s *Scheduler) claimDue(ctx context.Context) {
 
 // sweep requeues running jobs this process does not hold: their finish
 // could not be recorded (ADR 0006 §1). It runs at most once a sweep
-// interval. It reads the running ids on a reader first and takes the
-// writer only when one is not in the registry; inside its Write it reads
-// the registry again under s.mu, so a job claimed or finished meanwhile is
-// never requeued.
+// interval, and at once when the clock was set back past the last sweep.
+// It reads the running ids on a reader first and takes the writer only
+// when one is not in the registry; inside its Write it reads the registry
+// again under s.mu, so a job claimed or finished meanwhile is never
+// requeued.
+//
+// It also warns, once per job, about a handler that has not returned
+// although its context ended (Timeout passed, or stopped): that job keeps
+// its slot until the handler returns (ADR 0006 §4).
 func (s *Scheduler) sweep(ctx context.Context) {
 	now := s.clock.Now()
 	if ctx.Err() != nil {
@@ -158,13 +171,19 @@ func (s *Scheduler) sweep(ctx context.Context) {
 	}
 	s.mu.Lock()
 	prev := s.lastSweep
-	due := now.Sub(prev) >= s.t.sweepEvery && s.stepReady(stepSweep, now)
+	gap := now.Sub(prev)
+	due := (gap < 0 || gap >= s.t.sweepEvery) && s.stepReady(stepSweep, now)
+	var stuck []*jobEntry
 	if due {
 		s.lastSweep = now // concurrent ticks: one sweeps
+		stuck = s.newlyStuck()
 	}
 	s.mu.Unlock()
 	if !due {
 		return
+	}
+	for _, e := range stuck {
+		s.log.Warn("job handler outlived its context", "kind", e.job.Kind, "id", e.job.ID, "attempt", e.job.Attempt)
 	}
 	failed := func(err error) {
 		s.mu.Lock()
@@ -207,6 +226,21 @@ func (s *Scheduler) sweep(ctx context.Context) {
 	}
 }
 
+// newlyStuck returns, by id, the registry entries whose context has ended
+// while their handler has not returned and that were not reported yet,
+// and marks them reported. The caller holds s.mu.
+func (s *Scheduler) newlyStuck() []*jobEntry {
+	var out []*jobEntry
+	for _, id := range slices.Sorted(maps.Keys(s.jobs)) {
+		e := s.jobs[id]
+		if e.ctx.Err() != nil && !e.returned && !e.warnedStuck {
+			e.warnedStuck = true
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // anyUnheld reports whether an id in ids is not in the registry.
 func (s *Scheduler) anyUnheld(ids []int64) bool {
 	s.mu.Lock()
@@ -220,10 +254,12 @@ func (s *Scheduler) anyUnheld(ids []int64) bool {
 }
 
 // claimKind claims due jobs of k, one Write each, while k has a free slot
-// and a job was claimed. A claim-time hook failure puts that job in hook
-// backoff and claims again at once, so it never blocks the kind; it is not
-// a step failure. It returns the error of a failed claim, or ctx's once
-// ctx is done.
+// and a job was claimed. While k has no free slot, it still fails the due
+// jobs of k that used all their attempts (failExhausted), so they do not
+// wait for one. A claim-time hook failure puts that job in hook backoff
+// and claims again at once, so it never blocks the kind; it is not a step
+// failure. It returns the error of a failed claim, or ctx's once ctx is
+// done.
 func (s *Scheduler) claimKind(ctx context.Context, k *kindState) error {
 	// hookFailed holds the jobs whose hook failed in this round; they are
 	// skipped even if their backoff has already run out.
@@ -235,11 +271,16 @@ func (s *Scheduler) claimKind(ctx context.Context, k *kindState) error {
 		s.mu.Lock()
 		free := s.freeSlots(k)
 		s.mu.Unlock()
-		if free == 0 {
-			return nil
-		}
 
-		out, err := s.claim(ctx, k, hookFailed)
+		var (
+			out claimOutcome
+			err error
+		)
+		if free == 0 {
+			out, err = s.failExhausted(ctx, k, hookFailed)
+		} else {
+			out, err = s.claim(ctx, k, hookFailed)
+		}
 		if err != nil {
 			return err
 		}
@@ -264,13 +305,13 @@ func (s *Scheduler) claimKind(ctx context.Context, k *kindState) error {
 // handler, skipping the jobs in hook backoff and those in skip.
 //
 // Inside the Write, a due job that already used all its attempts (it was
-// requeued after its last one) is marked failed, its hook runs, and the
-// next due job is read. For a job with attempts left, the free slot is
-// checked again under s.mu, reserved and the job registered in the same
-// critical section, then the job is marked running. If the Write fails,
-// the reservation and registration are undone. Once it commits, the
-// handler always starts. The Write refuses to claim once ctx is done, so a
-// job queued after shutdown began is never claimed.
+// requeued after its last one) is failed (failExhaustedRow) and the next
+// due job is read. For a job with attempts left, the free slot is checked
+// again under s.mu, reserved and the job registered in the same critical
+// section, then the job is marked running. If the Write fails, the
+// reservation and registration are undone. Once it commits, the handler
+// always starts. The Write refuses to claim once ctx is done, so a job
+// queued after shutdown began is never claimed.
 func (s *Scheduler) claim(ctx context.Context, k *kindState, skip []int64) (claimOutcome, error) {
 	var (
 		out       claimOutcome
@@ -291,16 +332,8 @@ func (s *Scheduler) claim(ctx context.Context, k *kindState, skip []int64) (clai
 			}
 
 			if row.Attempts >= k.maxAttempts() {
-				changed, err := s.st.MarkFinal(ctx, row.ID, StateQueued, StateFailed, nil, now)
-				if err != nil {
+				if err := s.failExhaustedRow(ctx, k, row, now, &out); err != nil {
 					return err
-				}
-				if !changed {
-					return fmt.Errorf("job %d is no longer queued", row.ID)
-				}
-				if herr := s.runHook(ctx, k, jobOf(k, row), ReasonFailed, row.LastError); herr != nil {
-					out = claimOutcome{result: claimHookFailed, hookID: row.ID, hookErr: herr.Error()}
-					return herr
 				}
 				exhausted = append(exhausted, row)
 				continue
@@ -324,12 +357,118 @@ func (s *Scheduler) claim(ctx context.Context, k *kindState, skip []int64) (clai
 		if entry != nil {
 			s.release(entry)
 		}
-		if out.result == claimHookFailed {
-			return out, nil
+		return s.claimFailed(k, err, out, exhausted)
+	}
+	s.exhaustedFailed(exhausted)
+	if entry == nil {
+		return out, nil
+	}
+	s.log.Debug("job claimed", "kind", entry.job.Kind, "id", entry.job.ID, "attempt", entry.job.Attempt)
+	s.mu.Lock()
+	s.handlers++
+	s.mu.Unlock()
+	s.jobWG.Add(1)
+	go s.runJob(entry)
+	return out, nil
+}
+
+// failExhausted fails, in one Write, the due jobs of k that already used
+// all their attempts, skipping the jobs in hook backoff and those in skip.
+// It runs while k has no free slot, so such a job does not wait for one
+// (ADR 0006 §2). A read on the readers first checks that there is one, so
+// a busy kind takes the writer only when there is work. It reserves
+// nothing and starts no handler; a hook failure is handled as in claim.
+func (s *Scheduler) failExhausted(ctx context.Context, k *kindState, skip []int64) (claimOutcome, error) {
+	checkAt := s.clock.Now()
+	skip = append(s.hookSkip(checkAt), skip...)
+	attempts := k.maxAttempts()
+	if _, ok, err := s.st.NextExhausted(ctx, k.kind.Name, checkAt, attempts, skip); err != nil || !ok {
+		if err != nil {
+			err = fmt.Errorf("claim %s: %w", k.kind.Name, err)
 		}
-		return claimOutcome{}, fmt.Errorf("claim %s: %w", k.kind.Name, err)
+		return claimOutcome{}, err
 	}
 
+	var (
+		out    claimOutcome
+		failed []Row
+	)
+	err := s.tx.Write(ctx, func(ctx context.Context) error {
+		out, failed = claimOutcome{}, nil
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		now := s.clock.Now()
+		for {
+			row, ok, err := s.st.NextExhausted(ctx, k.kind.Name, now, attempts, skip)
+			if err != nil || !ok {
+				return err
+			}
+			if err := s.failExhaustedRow(ctx, k, row, now, &out); err != nil {
+				return err
+			}
+			failed = append(failed, row)
+		}
+	})
+	if err != nil {
+		return s.claimFailed(k, err, out, failed)
+	}
+	s.exhaustedFailed(failed)
+	return out, nil
+}
+
+// failExhaustedRow marks row, a due job of k that already used all its
+// attempts, failed in the claim Write that ctx carries, keeping its last
+// error, and runs its hook. When the hook fails, or returns nil although
+// its transaction ended, it sets *out to claimHookFailed for row and
+// returns an error, so the Write rolls back.
+func (s *Scheduler) failExhaustedRow(ctx context.Context, k *kindState, row Row, now time.Time, out *claimOutcome) error {
+	changed, err := s.st.MarkFinal(ctx, row.ID, StateQueued, StateFailed, nil, now)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return fmt.Errorf("job %d is no longer queued", row.ID)
+	}
+	if herr := s.runHook(ctx, k, jobOf(k, row), ReasonFailed, row.LastError); herr != nil {
+		*out = claimOutcome{result: claimHookFailed, hookID: row.ID, hookErr: herr.Error()}
+		return herr
+	}
+	if !store.InWrite(ctx) {
+		*out = claimOutcome{result: claimHookFailed, hookID: row.ID, hookErr: errHookEndedTx.Error()}
+		return errHookEndedTx
+	}
+	return nil
+}
+
+// claimFailed reads the error of a claim or failExhausted Write that
+// failed, with the outcome its fn set and the exhausted rows it failed
+// (their hooks returned nil).
+//
+// It is a hook failure when fn said so, or when the Write rolled back with
+// store.ErrRolledBack after a hook ran: only a FailedHook starts a nested
+// Write in these fns, so a hook dropped its nested Write's error. The last
+// hook that ran is blamed; if an earlier one was at fault, it fails again
+// on the next claim and is blamed then. Any other failure is returned as a
+// claim error.
+func (s *Scheduler) claimFailed(k *kindState, err error, out claimOutcome, exhausted []Row) (claimOutcome, error) {
+	if out.result != claimHookFailed && len(exhausted) > 0 && errors.Is(err, store.ErrRolledBack) {
+		last := exhausted[len(exhausted)-1]
+		out = claimOutcome{
+			result:  claimHookFailed,
+			hookID:  last.ID,
+			hookErr: "failure hook returned nil after its nested write failed: " + err.Error(),
+		}
+	}
+	if out.result == claimHookFailed {
+		return out, nil
+	}
+	return claimOutcome{}, fmt.Errorf("claim %s: %w", k.kind.Name, err)
+}
+
+// exhaustedFailed logs each job a committed claim or failExhausted Write
+// failed for want of attempts, and drops its hook backoff.
+func (s *Scheduler) exhaustedFailed(exhausted []Row) {
 	for _, row := range exhausted {
 		s.mu.Lock()
 		delete(s.hookBackoff, row.ID)
@@ -337,15 +476,6 @@ func (s *Scheduler) claim(ctx context.Context, k *kindState, skip []int64) (clai
 		s.log.Error("job failed: attempts exhausted after restart",
 			"kind", row.Kind, "id", row.ID, "attempt", row.Attempts, "error", s.errorText(row.LastError))
 	}
-	if entry != nil {
-		s.log.Debug("job claimed", "kind", entry.job.Kind, "id", entry.job.ID, "attempt", entry.job.Attempt)
-		s.mu.Lock()
-		s.handlers++
-		s.mu.Unlock()
-		s.jobWG.Add(1)
-		go s.runJob(entry)
-	}
-	return out, nil
 }
 
 // reserve takes a slot of k for row and registers its job entry, in one
@@ -369,9 +499,15 @@ func (s *Scheduler) reserve(k *kindState, row Row, now time.Time) *jobEntry {
 
 // release frees e's slot, removes it from the registry and ends its
 // context. It undoes a reservation whose claim rolled back, and ends a job
-// whose finish was recorded or given up.
+// whose finish was recorded or given up. Only its first call for e does
+// anything.
 func (s *Scheduler) release(e *jobEntry) {
 	s.mu.Lock()
+	if e.released {
+		s.mu.Unlock()
+		return
+	}
+	e.released = true
 	e.kind.running--
 	if s.jobs[e.job.ID] == e {
 		delete(s.jobs, e.job.ID)
@@ -384,13 +520,17 @@ func (s *Scheduler) release(e *jobEntry) {
 // hookSkip returns the ids of the jobs whose claim-time hook backoff has
 // not run out at now.
 //
+// An entry whose end is further from now than the longest hook backoff
+// can be (the clock was set back) has run out.
+//
 // It also prunes entries that ran out more than twice the longest hook
 // backoff ago. Such an entry mostly belongs to a job that left the queue
 // another way: when Cancel commits between a claim Write whose hook failed
 // and its backOffHook call, Cancel deletes the entry and backOffHook then
 // creates it again for a job that is no longer queued. A job still queued
-// is retried at the first tick after its entry runs out where its kind
-// has a free slot; if the kind has had none for that long, pruning only
+// is retried at the first tick after its entry runs out, with or without
+// a free slot (failExhausted); if no tick reached its kind's claims for
+// that long (the claim or due-kinds step kept failing), pruning only
 // restarts the job's backoff at its first step, which is harmless.
 func (s *Scheduler) hookSkip(now time.Time) []int64 {
 	s.mu.Lock()
@@ -399,7 +539,7 @@ func (s *Scheduler) hookSkip(now time.Time) []int64 {
 	for _, id := range slices.Sorted(maps.Keys(s.hookBackoff)) {
 		r := s.hookBackoff[id]
 		switch {
-		case r.until.After(now):
+		case r.until.After(now) && r.until.Sub(now) <= s.t.hookBackoffMax:
 			ids = append(ids, id)
 		case now.Sub(r.until) > 2*s.t.hookBackoffMax:
 			delete(s.hookBackoff, id)
@@ -432,9 +572,12 @@ func (s *Scheduler) stepReadyNow(step string, now time.Time) bool {
 	return s.stepReady(step, now)
 }
 
-// stepReady is stepReadyNow for a caller that holds s.mu.
+// stepReady is stepReadyNow for a caller that holds s.mu. A backoff whose
+// end is further from now than the longest step backoff (the clock was
+// set back) has run out.
 func (s *Scheduler) stepReady(step string, now time.Time) bool {
-	return !now.Before(s.steps[step].until)
+	until := s.steps[step].until
+	return !now.Before(until) || until.Sub(now) > s.t.stepBackoffMax
 }
 
 // stepOK resets step's backoff after it succeeded.
@@ -466,7 +609,7 @@ func (s *Scheduler) stepFailed(ctx context.Context, step string, err error) {
 	st := s.steps[step]
 	st.failures++
 	st.until = now.Add(stepBackoff(st.failures, s.t.stepBackoffMax))
-	logIt := st.lastLog.IsZero() || now.Sub(st.lastLog) >= stepLogEvery
+	logIt := st.lastLog.IsZero() || now.Sub(st.lastLog) >= stepLogEvery || now.Before(st.lastLog)
 	if logIt {
 		st.lastLog = now
 	}

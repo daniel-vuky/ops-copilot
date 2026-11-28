@@ -161,15 +161,20 @@ func TestEmptyLastErrorIsNull(t *testing.T) {
 
 	retried := mustInsert(t, db, s, newJob("k", jobNow))
 	requeued := mustInsert(t, db, s, newJob("k", jobNow))
-	for _, id := range []int64{retried, requeued} {
+	failed := mustInsert(t, db, s, newJob("k", jobNow))
+	for _, id := range []int64{retried, requeued, failed} {
 		mark(t, db, func(ctx context.Context) (bool, error) { return s.MarkRunning(ctx, id, jobNow) })
 	}
 	mark(t, db, func(ctx context.Context) (bool, error) { return s.MarkRetry(ctx, retried, jobNow, "", jobNow) })
+	empty := ""
+	mark(t, db, func(ctx context.Context) (bool, error) {
+		return s.MarkFinal(ctx, failed, jobs.StateRunning, jobs.StateFailed, &empty, jobNow)
+	})
 	write(t, db, func(ctx context.Context) error {
 		_, err := s.RequeueRunning(ctx, nil, "", jobNow)
 		return err
 	})
-	for _, id := range []int64{retried, requeued} {
+	for _, id := range []int64{retried, requeued, failed} {
 		var typ string
 		err := db.Reader().QueryRowContext(t.Context(),
 			"SELECT typeof(last_error) FROM jobs WHERE id = ?", id).Scan(&typ)
@@ -750,5 +755,57 @@ func TestKindLengthChecked(t *testing.T) {
 		if err == nil {
 			t.Errorf("Insert with kind of length %d succeeded, want a CHECK error", len(kind))
 		}
+	}
+}
+
+func TestNextExhausted(t *testing.T) {
+	t.Parallel()
+	db, s := openJobs(t)
+
+	at := func(m int) time.Time { return jobNow.Add(time.Duration(m-10) * time.Minute) }
+	young := mustInsert(t, db, s, newJob("k", at(0))) // 1 attempt, oldest
+	old2 := mustInsert(t, db, s, newJob("k", at(2)))  // 3 attempts
+	old1 := mustInsert(t, db, s, newJob("k", at(1)))  // 4 attempts
+	future := mustInsert(t, db, s, newJob("k", jobNow.Add(time.Minute)))
+	other := mustInsert(t, db, s, newJob("other", at(0)))
+	running := mustInsert(t, db, s, newJob("k", at(0)))
+	write(t, db, func(ctx context.Context) error {
+		q, err := db.WriteTx(ctx)
+		if err != nil {
+			return err
+		}
+		for id, n := range map[int64]int{young: 1, old2: 3, old1: 4, future: 3, other: 3, running: 3} {
+			if _, err := q.ExecContext(ctx, "UPDATE jobs SET attempts = ? WHERE id = ?", n, id); err != nil {
+				return err
+			}
+		}
+		_, err = q.ExecContext(ctx, "UPDATE jobs SET state = 'running' WHERE id = ?", running)
+		return err
+	})
+
+	inWrite := func(skip []int64) (int64, bool) {
+		var r jobs.Row
+		var ok bool
+		write(t, db, func(ctx context.Context) error {
+			var err error
+			r, ok, err = s.NextExhausted(ctx, "k", jobNow, 3, skip)
+			return err
+		})
+		return r.ID, ok
+	}
+	if got, ok := inWrite(nil); !ok || got != old1 {
+		t.Errorf("NextExhausted = (%d, %v), want (%d, true): the oldest due queued job with 3+ attempts", got, ok, old1)
+	}
+	if got, ok := inWrite([]int64{old1}); !ok || got != old2 {
+		t.Errorf("NextExhausted(skip %d) = (%d, %v), want (%d, true)", old1, got, ok, old2)
+	}
+	if got, ok := inWrite([]int64{old1, old2}); ok {
+		t.Errorf("NextExhausted with both skipped = %d, want none (young has attempts left, future is not due)", got)
+	}
+
+	// Outside a Write it reads from the readers.
+	r, ok, err := s.NextExhausted(t.Context(), "k", jobNow, 3, nil)
+	if err != nil || !ok || r.ID != old1 || r.Attempts != 4 {
+		t.Errorf("NextExhausted on the readers = (%+v, %v, %v), want job %d with 4 attempts", r, ok, err, old1)
 	}
 }

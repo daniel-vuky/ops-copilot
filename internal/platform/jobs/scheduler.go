@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"runtime/debug"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,7 +24,8 @@ type Options struct {
 	// Logger receives the scheduler's log lines; nil means slog.Default().
 	Logger *slog.Logger
 	// Scrub rewrites every error text (handler, hook, step) before it is
-	// cut, stored or logged (ADR 0006 §7); nil means ScrubURLs.
+	// stored or logged (ADR 0006 §7): the text is cut to 16 KiB, scrubbed,
+	// then cut to 1 KiB. Nil means ScrubURLs.
 	Scrub func(string) string
 }
 
@@ -159,7 +161,7 @@ func (k *kindState) delay(attempt int) time.Duration {
 
 // jobEntry is a claimed job in the registry, from its claim until its
 // finish is recorded or given up. job, kind, ctx, cancel, stopTimer and
-// start never change after the claim; stopped and finishing are guarded by
+// start never change after the claim; the flags below them are guarded by
 // Scheduler.mu.
 type jobEntry struct {
 	job  Job        // as the handler sees it: Attempt is the one claimed
@@ -178,6 +180,14 @@ type jobEntry struct {
 	// finishing is set inside a finish Write; Stop then returns false. It
 	// is cleared when that Write fails.
 	finishing bool
+	// returned is set once the handler has returned (or exited, or was
+	// skipped because the job was stopped before it started).
+	returned bool
+	// warnedStuck is set once the sweep has warned that the handler
+	// outlived its context.
+	warnedStuck bool
+	// released is set by the first release; later calls do nothing.
+	released bool
 }
 
 // stepState is the error backoff of one dispatcher step. Guarded by
@@ -533,6 +543,20 @@ func (s *Scheduler) Cancel(ctx context.Context, kind string, id int64) error {
 	return nil
 }
 
+// Get returns job id of kind, read in the Write that ctx carries if any,
+// else from the readers. ok is false when there is no such job, or it is
+// of another kind.
+func (s *Scheduler) Get(ctx context.Context, kind string, id int64) (Row, bool, error) {
+	row, found, err := s.st.Get(ctx, id)
+	if err != nil {
+		return Row{}, false, fmt.Errorf("jobs: get %q job %d: %w", kind, id, err)
+	}
+	if !found || row.Kind != kind {
+		return Row{}, false, nil
+	}
+	return row, true, nil
+}
+
 // jobOf returns the Job a hook of k sees for row: Attempt is row.Attempts,
 // the attempts started (0 for a job never claimed). The claim adds one for
 // the attempt it starts, so a handler sees Attempt 1 the first time.
@@ -647,8 +671,9 @@ func (s *Scheduler) requeueAtStart(ctx context.Context) error {
 // up to the drain timeout (6 s) for running handlers; then it cancels
 // their contexts, which also cuts the remaining finish-retry delays, and
 // waits up to the cancel wait (2 s) more. It returns nil when every
-// handler returned, else an error naming how many are still running;
-// their rows stay running and the next start requeues them.
+// handler returned, else an error naming how many job goroutines are
+// still running and the kind and id of each job whose handler has not
+// returned; their rows stay running and the next start requeues them.
 func (s *Scheduler) Run(ctx context.Context) error {
 	s.mu.Lock()
 	switch {
@@ -700,11 +725,21 @@ func (s *Scheduler) drain() error {
 	}
 	s.mu.Lock()
 	n := s.handlers
+	var stuck []string
+	for _, id := range slices.Sorted(maps.Keys(s.jobs)) {
+		if e := s.jobs[id]; !e.returned {
+			stuck = append(stuck, fmt.Sprintf("%s job %d", e.job.Kind, id))
+		}
+	}
 	s.mu.Unlock()
 	if n == 0 { // the last one returned just now
 		return nil
 	}
-	return fmt.Errorf("jobs: %d handlers still running after shutdown", n)
+	err := fmt.Errorf("jobs: %d handlers still running after shutdown", n)
+	if len(stuck) > 0 {
+		err = fmt.Errorf("%w: %s", err, strings.Join(stuck, ", "))
+	}
+	return err
 }
 
 // waitFor reports whether done closes within d.

@@ -657,3 +657,51 @@ func TestNoClaimFailureWhileShuttingDown(t *testing.T) {
 		}
 	})
 }
+
+func TestSweepFollowsClockSetBack(t *testing.T) {
+	t.Parallel()
+	db, st := openStore(t)
+	clk := newFakeClock()
+	s := newScheduler(t, db, st, clk)
+	register(t, s, jobs.Kind{Name: "work", Handler: noop})
+	mustRecover(t, s)
+
+	clk.Advance(time.Hour)
+	s.TickForTest(t.Context()) // sweeps at +1 h
+	clk.Advance(-time.Hour)    // and is corrected
+
+	// A running row this process does not hold is requeued on the next
+	// tick, not an hour and a minute later.
+	id := enqueue(t, db, s, "work", nil)
+	exec(t, db, "UPDATE jobs SET state = 'running', attempts = 1 WHERE id = ?", id)
+	s.TickForTest(t.Context())
+	if r := jobRow(t, db, id); r.State != jobs.StateQueued || r.LastError != "finish not recorded" {
+		t.Errorf("orphan after a tick on a clock set back = %q last_error %q, want queued, %q",
+			r.State, r.LastError, "finish not recorded")
+	}
+}
+
+func TestStepBackoffFollowsClockSetBack(t *testing.T) {
+	t.Parallel()
+	db, st := openStore(t)
+	clk := newFakeClock()
+	s, fs, _ := newFlakyScheduler(t, db, st, clk)
+	register(t, s, jobs.Kind{Name: "work", Handler: noop})
+	mustRecover(t, s)
+
+	fs.failDue.Store(true)
+	s.TickForTest(t.Context()) // backs the step off for 1 s
+	fs.failDue.Store(false)
+	clk.Advance(-time.Hour)
+
+	// The backoff now ends further away than its 30 s maximum: the step is
+	// ready.
+	id := enqueue(t, db, s, "work", nil)
+	tickAndWait(t, s)
+	if n := fs.dueCalls.Load(); n != 2 {
+		t.Errorf("DueKinds calls = %d, want 2 (the backoff ignored after the clock was set back)", n)
+	}
+	if r := jobRow(t, db, id); r.State != jobs.StateSucceeded {
+		t.Errorf("job = %q, want succeeded", r.State)
+	}
+}

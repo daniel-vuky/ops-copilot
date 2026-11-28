@@ -84,6 +84,17 @@ func findLine(lines []map[string]any, msg string) (map[string]any, bool) {
 	return nil, false
 }
 
+// lineIndex returns the index of the first log line whose msg is msg, or
+// -1.
+func lineIndex(lines []map[string]any, msg string) int {
+	for i, l := range lines {
+		if l["msg"] == msg {
+			return i
+		}
+	}
+	return -1
+}
+
 // serveUntilHealthy runs the program with env until /healthz on its
 // LISTEN_ADDR answers 200, then cancels it and returns its exit status and
 // output.
@@ -416,6 +427,10 @@ func TestRunRequeuesJobsAtStart(t *testing.T) {
 	if l["count"] != float64(1) {
 		t.Errorf("jobs requeued count = %v, want 1", l["count"])
 	}
+	requeuedAt, listeningAt := lineIndex(lines, "jobs requeued"), lineIndex(lines, "listening")
+	if listeningAt < 0 || requeuedAt > listeningAt {
+		t.Errorf("jobs requeued at line %d, listening at line %d: want the requeue before listening", requeuedAt, listeningAt)
+	}
 	w, ok := findLine(lines, "queued jobs of unregistered kinds")
 	if !ok {
 		t.Fatalf("no %q line in stdout: %q", "queued jobs of unregistered kinds", stdout.String())
@@ -426,6 +441,61 @@ func TestRunRequeuesJobsAtStart(t *testing.T) {
 	kinds, _ := w["kinds"].(map[string]any)
 	if kinds["x"] != float64(1) {
 		t.Errorf("unregistered kinds = %v, want x: 1", w["kinds"])
+	}
+}
+
+func TestRunJobRecoveryFailure(t *testing.T) {
+	keepDefaultLogger(t)
+	dataDir := t.TempDir()
+
+	// A migrated store whose jobs table is gone: Recover's requeue fails.
+	db, err := sqlite.Open(context.Background(), sqlite.Options{Dir: dataDir})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+	fixture, err := sql.Open("sqlite", filepath.Join(dataDir, sqlite.FileName))
+	if err != nil {
+		t.Fatalf("open fixture: %v", err)
+	}
+	if _, err := fixture.ExecContext(context.Background(), "DROP TABLE jobs"); err != nil {
+		_ = fixture.Close()
+		t.Fatalf("drop jobs: %v", err)
+	}
+	if err := fixture.Close(); err != nil {
+		t.Fatalf("close fixture: %v", err)
+	}
+
+	env := envOf(map[string]string{
+		"PUBLIC_URL":  "https://ops.example.test",
+		"LISTEN_ADDR": freeAddr(t),
+		"DATA_DIR":    dataDir,
+	})
+	// The deadline only bounds a run that wrongly starts serving.
+	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
+	defer cancel()
+	var stdout, stderr bytes.Buffer
+	if code := run(ctx, nil, env, &stdout, &stderr); code != 1 {
+		t.Fatalf("run() = %d, want 1 (stdout %q)", code, stdout.String())
+	}
+
+	lines := jsonLines(t, &stdout)
+	if _, ok := findLine(lines, "store opened"); !ok {
+		t.Fatalf("no %q line in stdout: %q (the altered schema must open)", "store opened", stdout.String())
+	}
+	l, ok := findLine(lines, "job recovery failed")
+	if !ok {
+		t.Fatalf("no %q line in stdout: %q", "job recovery failed", stdout.String())
+	}
+	if l["level"] != "ERROR" {
+		t.Errorf("job recovery failed level = %v, want ERROR", l["level"])
+	}
+	for _, msg := range []string{"listening", "store close failed"} {
+		if _, ok := findLine(lines, msg); ok {
+			t.Errorf("unexpected %q line in stdout: %q", msg, stdout.String())
+		}
 	}
 }
 

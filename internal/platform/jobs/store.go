@@ -80,6 +80,10 @@ type Store interface {
 	// or before now (ties by id), skipping the ids in skip. ok is false
 	// when there is none.
 	NextDue(ctx context.Context, kind string, now time.Time, skip []int64) (r Row, ok bool, err error)
+	// NextExhausted is NextDue limited to the jobs whose Attempts is at
+	// least attempts: jobs requeued after their last attempt. Like Get, it
+	// reads in the Write that ctx carries if any, else from the readers.
+	NextExhausted(ctx context.Context, kind string, now time.Time, attempts int, skip []int64) (r Row, ok bool, err error)
 	// MarkRunning claims a queued job: it becomes running, its attempts
 	// grow by one and StartedAt is now.
 	MarkRunning(ctx context.Context, id int64, now time.Time) (bool, error)

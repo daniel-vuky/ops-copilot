@@ -566,3 +566,30 @@ func TestRecoverRunsOnce(t *testing.T) {
 		t.Errorf("concurrent Recover calls: %d succeeded (%v), want exactly 1", ok, errs)
 	}
 }
+
+func TestGet(t *testing.T) {
+	t.Parallel()
+	db, st := openStore(t)
+	s := newScheduler(t, db, st, newFakeClock())
+	register(t, s, jobs.Kind{Name: "work", Handler: noop})
+	register(t, s, jobs.Kind{Name: "other", Handler: noop})
+	mustRecover(t, s)
+
+	id := enqueue(t, db, s, "work", []byte(`{"id":7}`))
+	r, ok, err := s.Get(t.Context(), "work", id)
+	if err != nil || !ok {
+		t.Fatalf("Get(work, %d) = ok %v, err %v, want found", id, ok, err)
+	}
+	if r.ID != id || r.Kind != "work" || r.State != jobs.StateQueued || string(r.Payload) != `{"id":7}` {
+		t.Errorf("Get(work, %d) = %+v, want the queued work job", id, r)
+	}
+
+	for _, c := range []struct {
+		kind string
+		id   int64
+	}{{"other", id}, {"work", id + 100}} {
+		if r, ok, err := s.Get(t.Context(), c.kind, c.id); err != nil || ok {
+			t.Errorf("Get(%s, %d) = %+v, ok %v, err %v, want not found", c.kind, c.id, r, ok, err)
+		}
+	}
+}

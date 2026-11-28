@@ -3,6 +3,8 @@ package jobs_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"runtime"
 	"strings"
 	"sync"
@@ -150,8 +152,9 @@ func TestShutdownReportsStuckHandler(t *testing.T) {
 	id := enqueue(t, db, s, "work", nil)
 	recv(t, b.started, "the handler")
 	err := stop()
-	if err == nil || !strings.Contains(err.Error(), "1 handlers still running") {
-		t.Errorf("Run = %v, want an error naming 1 handler still running", err)
+	if err == nil || !strings.Contains(err.Error(), "1 handlers still running") ||
+		!strings.Contains(err.Error(), fmt.Sprintf("work job %d", id)) {
+		t.Errorf("Run = %v, want an error naming 1 handler still running: work job %d", err, id)
 	}
 	if r := jobRow(t, db, id); r.State != jobs.StateRunning {
 		t.Errorf("job = %q, want still running", r.State)
@@ -370,4 +373,109 @@ func TestFinishFindsRowInAnotherState(t *testing.T) {
 	if r := jobRow(t, db, next); r.State != jobs.StateSucceeded {
 		t.Errorf("next job = %q, want succeeded", r.State)
 	}
+}
+
+// gateHandler is a slog.Handler that drops every record, and blocks the
+// one with message msg until release is closed, after signalling reached.
+type gateHandler struct {
+	msg     string
+	reached chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+// newGateHandler returns a gateHandler for msg whose release is closed at
+// cleanup.
+func newGateHandler(t *testing.T, msg string) *gateHandler {
+	t.Helper()
+	h := &gateHandler{msg: msg, reached: make(chan struct{}, 1), release: make(chan struct{})}
+	t.Cleanup(h.open)
+	return h
+}
+
+// open releases the blocked record, once.
+func (h *gateHandler) open() { h.once.Do(func() { close(h.release) }) }
+
+// Enabled reports true for every level.
+func (h *gateHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+// Handle blocks a record with message msg until release is closed.
+func (h *gateHandler) Handle(_ context.Context, r slog.Record) error {
+	if r.Message == h.msg {
+		select {
+		case h.reached <- struct{}{}:
+		default:
+		}
+		<-h.release
+	}
+	return nil
+}
+
+// WithAttrs returns h.
+func (h *gateHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+
+// WithGroup returns h.
+func (h *gateHandler) WithGroup(string) slog.Handler { return h }
+
+func TestSlotFreedBeforeFinishLogged(t *testing.T) {
+	t.Parallel()
+	db, st := openStore(t)
+	gate := newGateHandler(t, "job succeeded")
+	s := jobs.New(st, db, jobs.Options{Clock: newFakeClock(), Logger: slog.New(gate)})
+	register(t, s, jobs.Kind{Name: "work", Concurrency: 1, MaxWaiting: 1, Handler: noop})
+	mustRecover(t, s)
+
+	enqueue(t, db, s, "work", nil)
+	s.TickForTest(t.Context())
+	recv(t, gate.reached, "the finish log") // the finish is recorded
+
+	// The slot is free: one queued job is not waiting, so a second fits
+	// MaxWaiting 1.
+	enqueue(t, db, s, "work", nil)
+	var err error
+	write(t, db, func(ctx context.Context) error {
+		_, err = s.Enqueue(ctx, "work", nil)
+		return nil
+	})
+	if err != nil {
+		t.Errorf("Enqueue with the finished job's slot free = %v, want nil", err)
+	}
+	gate.open()
+	s.WaitJobsForTest()
+}
+
+func TestSweepWarnsOnceAboutStuckHandler(t *testing.T) {
+	t.Parallel()
+	db, st := openStore(t)
+	clk := newFakeClock()
+	s, lb := newLoggedScheduler(t, db, st, clk)
+	b := newBlocker(t) // ignores its context
+	register(t, s, jobs.Kind{Name: "work", Handler: b.handler})
+	mustRecover(t, s)
+
+	id := enqueue(t, db, s, "work", nil)
+	s.TickForTest(t.Context())
+	recv(t, b.started, "the handler")
+	clk.Advance(time.Minute)
+	s.TickForTest(t.Context())
+	if lines := lb.lines(t, "job handler outlived its context"); len(lines) != 0 {
+		t.Fatalf("stuck lines while the context is live = %v, want none", lines)
+	}
+
+	if !s.Stop("work", id) {
+		t.Fatal("Stop = false, want true")
+	}
+	for range 2 {
+		clk.Advance(time.Minute)
+		s.TickForTest(t.Context())
+	}
+	lines := lb.lines(t, "job handler outlived its context")
+	if len(lines) != 1 {
+		t.Fatalf("stuck lines after two sweeps = %v, want one", lines)
+	}
+	if l := lines[0]; l["level"] != "WARN" || l["kind"] != "work" || l["id"] != float64(id) || l["attempt"] != float64(1) {
+		t.Errorf("stuck line = %v, want WARN, kind work, id %d, attempt 1", l, id)
+	}
+	b.unblock()
+	s.WaitJobsForTest()
 }

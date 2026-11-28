@@ -19,7 +19,9 @@ const jobColumns = `id, kind, payload, state, attempts, run_after_at, period_at,
 
 // JobStore implements jobs.Store on the jobs table (migration 0001). Writes
 // and the claim reads use the write transaction of the caller's Write;
-// DueKinds, RunningIDs and QueuedByKind use the reader pool.
+// DueKinds, RunningIDs and QueuedByKind use the reader pool; Get and
+// NextExhausted read in the caller's Write if ctx carries one, else from
+// the reader pool.
 type JobStore struct {
 	db *DB
 }
@@ -110,6 +112,23 @@ func (s *JobStore) NextDue(ctx context.Context, kind string, now time.Time, skip
 	return r, true, nil
 }
 
+// NextExhausted implements jobs.Store.
+func (s *JobStore) NextExhausted(ctx context.Context, kind string, now time.Time, attempts int, skip []int64) (jobs.Row, bool, error) {
+	notIn, idArgs := notInIDs(skip)
+	args := append([]any{string(jobs.StateQueued), kind, now, attempts}, idArgs...)
+	row := s.db.Querier(ctx).QueryRowContext(ctx, "SELECT "+jobColumns+` FROM jobs
+		WHERE state = ? AND kind = ? AND run_after_at <= ? AND attempts >= ?`+notIn+`
+		ORDER BY run_after_at, id LIMIT 1`, args...)
+	r, err := scanRow(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return jobs.Row{}, false, nil
+	}
+	if err != nil {
+		return jobs.Row{}, false, fmt.Errorf("jobs store: next exhausted %s: %w", kind, err)
+	}
+	return r, true, nil
+}
+
 // MarkRunning implements jobs.Store.
 func (s *JobStore) MarkRunning(ctx context.Context, id int64, now time.Time) (bool, error) {
 	return s.update(ctx, "mark running", id, `UPDATE jobs
@@ -151,7 +170,7 @@ func (s *JobStore) MarkFinal(ctx context.Context, id int64, from, to jobs.State,
 	return s.update(ctx, "mark final", id, `UPDATE jobs
 		SET state = ?, last_error = ?, finished_at = ?, updated_at = ?
 		WHERE id = ? AND state = ?`,
-		string(to), *lastErr, now, now, id, string(from))
+		string(to), nullString(*lastErr), now, now, id, string(from))
 }
 
 // RequeueRunning implements jobs.Store.
