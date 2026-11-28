@@ -1249,6 +1249,7 @@ func TestClaimAndFinishUseOneWriteEach(t *testing.T) {
 	db, st := openStore(t)
 	tx := &countingTx{Transactor: db}
 	s := jobs.New(st, tx, jobs.Options{Clock: newFakeClock(), Logger: slog.New(slog.DiscardHandler)})
+	s.SetTimingsForTest(jobs.TestTimings{SweepEvery: 24 * time.Hour})
 	register(t, s, jobs.Kind{Name: "work", Concurrency: 1, Handler: noop})
 	mustRecover(t, s)
 
@@ -1261,5 +1262,103 @@ func TestClaimAndFinishUseOneWriteEach(t *testing.T) {
 	}
 	if n := tx.writes.Load(); n != 2 {
 		t.Errorf("scheduler Writes = %d, want 2 (claim and finish)", n)
+	}
+}
+
+func TestClaimRollbackUndoesReservation(t *testing.T) {
+	t.Parallel()
+	db, st := openStore(t)
+	clk := newFakeClock()
+	s, fs, lb := newFlakyScheduler(t, db, st, clk)
+	register(t, s, jobs.Kind{Name: "work", Concurrency: 1, Handler: noop})
+	mustRecover(t, s)
+
+	id := enqueue(t, db, s, "work", nil)
+	fs.failRunning.Store(1)
+	tickAndWait(t, s)
+	if r := jobRow(t, db, id); r.State != jobs.StateQueued || r.Attempts != 0 {
+		t.Fatalf("job after a rolled-back claim = %q attempts %d, want queued, 0", r.State, r.Attempts)
+	}
+	if s.Stop("work", id) {
+		t.Error("Stop after a rolled-back claim = true, want false (registration undone)")
+	}
+	lines := lb.lines(t, "job scheduler step failed")
+	if len(lines) != 1 || lines[0]["step"] != "claim:work" {
+		t.Errorf("step failed lines = %v, want one for claim:work", lines)
+	}
+
+	// The reservation was undone: past the step's backoff, the next tick
+	// claims the job in the kind's only slot.
+	clk.Advance(time.Second)
+	tickAndWait(t, s)
+	if r := jobRow(t, db, id); r.State != jobs.StateSucceeded || r.Attempts != 1 {
+		t.Errorf("job on the next tick = %q attempts %d, want succeeded, 1", r.State, r.Attempts)
+	}
+}
+
+func TestClaimHookFailsForSecondExhaustedJob(t *testing.T) {
+	t.Parallel()
+	db, st := openStore(t)
+	s := newScheduler(t, db, st, newFakeClock())
+	var first, second int64
+	rec := &hookRecorder{fail: func(job jobs.Job) error {
+		if job.ID == second {
+			return errors.New("owner locked")
+		}
+		return nil
+	}}
+	register(t, s, jobs.Kind{Name: "work", Handler: noop, OnFailed: rec.hook})
+	mustRecover(t, s)
+
+	first = enqueue(t, db, s, "work", nil)
+	second = enqueue(t, db, s, "work", nil)
+	exec(t, db, "UPDATE jobs SET attempts = 3 WHERE id IN (?, ?)", first, second)
+	tickAndWait(t, s)
+
+	// One Write failed both and rolled back on the second's hook; the retry
+	// without the second fails the first for good.
+	if r := jobRow(t, db, first); r.State != jobs.StateFailed {
+		t.Errorf("first = %q, want failed after the retry", r.State)
+	}
+	if r := jobRow(t, db, second); r.State != jobs.StateQueued {
+		t.Errorf("second = %q, want queued (hook backoff)", r.State)
+	}
+	if n := rec.callsFor(first); n != 2 {
+		t.Errorf("hook calls for the first = %d, want 2 (rolled back once)", n)
+	}
+}
+
+func TestHookBackoffCap(t *testing.T) {
+	t.Parallel()
+	db, st := openStore(t)
+	clk := newFakeClock()
+	s := newScheduler(t, db, st, clk)
+	rec := &hookRecorder{fail: func(jobs.Job) error { return errors.New("owner locked") }}
+	register(t, s, jobs.Kind{Name: "work", Handler: noop, OnFailed: rec.hook})
+	mustRecover(t, s)
+
+	id := enqueue(t, db, s, "work", nil)
+	exec(t, db, "UPDATE jobs SET attempts = 3 WHERE id = ?", id)
+	tickAndWait(t, s)
+
+	// Backoffs 1, 2, 4, 8, 16 min, then capped at 30 (not 32).
+	calls := 1
+	for _, d := range []time.Duration{1, 2, 4, 8, 16} {
+		clk.Advance(d * time.Minute)
+		tickAndWait(t, s)
+		calls++
+		if n := rec.callsFor(id); n != calls {
+			t.Fatalf("hook calls after a %d min backoff = %d, want %d", d, n, calls)
+		}
+	}
+	clk.Advance(29 * time.Minute)
+	tickAndWait(t, s)
+	if n := rec.callsFor(id); n != calls {
+		t.Fatalf("hook calls 29 min into the capped backoff = %d, want %d", n, calls)
+	}
+	clk.Advance(time.Minute)
+	tickAndWait(t, s)
+	if n := rec.callsFor(id); n != calls+1 {
+		t.Errorf("hook calls after the 30 min cap = %d, want %d", n, calls+1)
 	}
 }

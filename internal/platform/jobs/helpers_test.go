@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/daniel-vuky/ops-copilot/internal/platform/adapters/sqlite"
 	"github.com/daniel-vuky/ops-copilot/internal/platform/jobs"
+	"github.com/daniel-vuky/ops-copilot/internal/platform/store"
 )
 
 // testNow is the fake clock's start, on a whole millisecond so it survives
@@ -188,4 +191,99 @@ func (b *logBuffer) lines(t *testing.T, msg string) []map[string]any {
 		}
 	}
 	return out
+}
+
+// errInjected is the error a flakyStore returns.
+var errInjected = errors.New("injected store failure")
+
+// flakyStore is a job store whose methods fail on demand. It is safe for
+// concurrent use.
+type flakyStore struct {
+	*sqlite.JobStore
+	failDue     atomic.Bool  // DueKinds fails while set
+	dueCalls    atomic.Int64 // DueKinds calls so far
+	failRunning atomic.Int32 // MarkRunning fails while above zero
+	failSucceed atomic.Int64 // MarkSucceeded fails for this job id; 0 means none
+	// succeedCalls, when not nil, gets a value (without blocking) on each
+	// MarkSucceeded call.
+	succeedCalls chan struct{}
+	// onDue, when not nil, runs in each DueKinds call. Set it before the
+	// tick that uses it, on the goroutine that ticks.
+	onDue func()
+}
+
+// newFlakyStore returns a flakyStore on st that fails nothing yet.
+func newFlakyStore(st *sqlite.JobStore) *flakyStore {
+	return &flakyStore{JobStore: st, succeedCalls: make(chan struct{}, 16)}
+}
+
+// DueKinds counts the call and fails while failDue is set.
+func (f *flakyStore) DueKinds(ctx context.Context, now time.Time, skip []int64) ([]string, error) {
+	f.dueCalls.Add(1)
+	if f.onDue != nil {
+		f.onDue()
+	}
+	if f.failDue.Load() {
+		return nil, errInjected
+	}
+	return f.JobStore.DueKinds(ctx, now, skip)
+}
+
+// MarkRunning fails while failRunning is above zero.
+func (f *flakyStore) MarkRunning(ctx context.Context, id int64, now time.Time) (bool, error) {
+	if f.failRunning.Add(-1) >= 0 {
+		return false, errInjected
+	}
+	return f.JobStore.MarkRunning(ctx, id, now)
+}
+
+// MarkSucceeded signals the call and fails for the job failSucceed names.
+func (f *flakyStore) MarkSucceeded(ctx context.Context, id int64, now time.Time) (bool, error) {
+	select {
+	case f.succeedCalls <- struct{}{}:
+	default:
+	}
+	if id == f.failSucceed.Load() {
+		return false, errInjected
+	}
+	return f.JobStore.MarkSucceeded(ctx, id, now)
+}
+
+// newFlakyScheduler returns a Scheduler on a flakyStore over st, with clk
+// and its log captured.
+func newFlakyScheduler(t *testing.T, db *sqlite.DB, st *sqlite.JobStore, clk *fakeClock) (*jobs.Scheduler, *flakyStore, *logBuffer) {
+	t.Helper()
+	fs := newFlakyStore(st)
+	lb := &logBuffer{}
+	return jobs.New(fs, db, jobs.Options{Clock: clk, Logger: lb.logger()}), fs, lb
+}
+
+// failingWriteTx is a store.Transactor that counts its Write calls and
+// fails them while fail is set.
+type failingWriteTx struct {
+	store.Transactor
+	fail  atomic.Bool
+	calls atomic.Int64
+}
+
+// Write counts the call, then fails or defers to the wrapped Transactor.
+func (f *failingWriteTx) Write(ctx context.Context, fn func(ctx context.Context) error) error {
+	f.calls.Add(1)
+	if f.fail.Load() {
+		return errInjected
+	}
+	return f.Transactor.Write(ctx, fn)
+}
+
+// newLoggedSchedulerTx returns a Scheduler on st writing through tx, with
+// clk and its log captured.
+func newLoggedSchedulerTx(t *testing.T, st *sqlite.JobStore, tx store.Transactor, clk *fakeClock) (*jobs.Scheduler, *logBuffer) {
+	t.Helper()
+	lb := &logBuffer{}
+	return jobs.New(st, tx, jobs.Options{Clock: clk, Logger: lb.logger()}), lb
+}
+
+// discard returns a logger that drops everything.
+func discard() *slog.Logger {
+	return slog.New(slog.DiscardHandler)
 }

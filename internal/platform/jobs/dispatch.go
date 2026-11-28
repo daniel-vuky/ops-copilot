@@ -29,59 +29,228 @@ type claimOutcome struct {
 	hookErr string // claimHookFailed: its error, scrubbed and cut
 }
 
-// tick runs one dispatcher round: it reads the due kinds and claims their
-// jobs while slots are free. It is safe for concurrent calls.
-//
-// Run (Task 5) adds the recurring periods before the claims and the orphan
-// sweep after them.
+// Dispatcher step names, for the per-step error backoff and the log.
+const (
+	stepDue   = "due"   // the due-kinds read
+	stepSweep = "sweep" // the orphan sweep
+)
+
+// periodsStep is the step name of kind's period insert.
+func periodsStep(kind string) string { return "periods:" + kind }
+
+// claimStep is the step name of kind's claims.
+func claimStep(kind string) string { return "claim:" + kind }
+
+// stepLogEvery is how often a failing step is logged at most.
+const stepLogEvery = time.Minute
+
+// lastErrOrphan is the last error of a running job the orphan sweep
+// requeued: its finish could not be recorded.
+const lastErrOrphan = "finish not recorded"
+
+// tick runs one dispatcher round: the recurring periods, then the claims
+// of the due kinds, then the orphan sweep. It is safe for concurrent
+// calls. A step in error backoff is skipped, even on a nudge. Once ctx is
+// done no step starts, and the claim Write refuses to claim.
 func (s *Scheduler) tick(ctx context.Context) {
-	s.claimDue(ctx, s.clock.Now())
+	s.ensurePeriods(ctx)
+	s.claimDue(ctx)
+	s.sweep(ctx)
+}
+
+// ensurePeriods queues the current period's job of each recurring kind
+// whose period this process has not ensured yet (ADR 0006 §5): one Write
+// per kind, inserting with the period and the kind's PeriodKey. A period
+// that already has its job, or whose key is held by an active job, inserts
+// nothing; either way the period is remembered, so it is skipped and not
+// retried. A failed insert backs off that kind's step only.
+func (s *Scheduler) ensurePeriods(ctx context.Context) {
+	now := s.clock.Now()
+	for _, k := range s.recurringKinds() {
+		if ctx.Err() != nil {
+			return
+		}
+		p := periodStart(now, k.kind.Every, k.kind.Offset)
+		step := periodsStep(k.kind.Name)
+		s.mu.Lock()
+		due := p.After(k.lastPeriod) && s.stepReady(step, now)
+		s.mu.Unlock()
+		if !due {
+			continue
+		}
+
+		err := s.tx.Write(ctx, func(ctx context.Context) error {
+			_, _, err := s.st.Insert(ctx, NewJob{
+				Kind:      k.kind.Name,
+				RunAfter:  p,
+				PeriodAt:  &p,
+				UniqueKey: k.kind.PeriodKey,
+				Now:       now,
+			})
+			return err
+		})
+		if err != nil {
+			s.stepFailed(ctx, step, fmt.Errorf("period %s of %s: %w", p.Format(time.RFC3339), k.kind.Name, err))
+			continue
+		}
+		s.mu.Lock()
+		if p.After(k.lastPeriod) {
+			k.lastPeriod = p
+		}
+		s.stepSucceeded(step)
+		s.mu.Unlock()
+	}
+}
+
+// recurringKinds returns the recurring kinds, sorted by name.
+func (s *Scheduler) recurringKinds() []*kindState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []*kindState
+	for _, name := range slices.Sorted(maps.Keys(s.kinds)) {
+		if k := s.kinds[name]; k.kind.Every > 0 {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // claimDue reads the kinds with a due job, outside any Write, and claims
-// the jobs of each registered one. Unregistered kinds are ignored and stay
-// queued. Jobs in hook backoff do not make their kind due.
-func (s *Scheduler) claimDue(ctx context.Context, now time.Time) {
-	kinds, err := s.st.DueKinds(ctx, now, s.hookSkip(now))
-	if err != nil {
-		s.stepFailed(ctx, "due kinds", "", err)
+// the jobs of each registered one whose claim step is not in backoff.
+// Unregistered kinds are ignored and stay queued. Jobs in hook backoff do
+// not make their kind due.
+func (s *Scheduler) claimDue(ctx context.Context) {
+	now := s.clock.Now()
+	if ctx.Err() != nil || !s.stepReadyNow(stepDue, now) {
 		return
 	}
+	kinds, err := s.st.DueKinds(ctx, now, s.hookSkip(now))
+	if err != nil {
+		s.stepFailed(ctx, stepDue, err)
+		return
+	}
+	s.stepOK(stepDue)
+
 	for _, name := range kinds {
-		if k := s.kind(name); k != nil {
-			s.claimKind(ctx, k)
+		k := s.kind(name)
+		step := claimStep(name)
+		if k == nil || !s.stepReadyNow(step, now) {
+			continue
+		}
+		if err := s.claimKind(ctx, k); err != nil {
+			s.stepFailed(ctx, step, err)
+			continue
+		}
+		s.stepOK(step)
+	}
+}
+
+// sweep requeues running jobs this process does not hold: their finish
+// could not be recorded (ADR 0006 §1). It runs at most once a sweep
+// interval. It reads the running ids on a reader first and takes the
+// writer only when one is not in the registry; inside its Write it reads
+// the registry again under s.mu, so a job claimed or finished meanwhile is
+// never requeued.
+func (s *Scheduler) sweep(ctx context.Context) {
+	now := s.clock.Now()
+	if ctx.Err() != nil {
+		return
+	}
+	s.mu.Lock()
+	prev := s.lastSweep
+	due := now.Sub(prev) >= s.t.sweepEvery && s.stepReady(stepSweep, now)
+	if due {
+		s.lastSweep = now // concurrent ticks: one sweeps
+	}
+	s.mu.Unlock()
+	if !due {
+		return
+	}
+	failed := func(err error) {
+		s.mu.Lock()
+		if s.lastSweep.Equal(now) {
+			s.lastSweep = prev // the step backoff decides the retry
+		}
+		s.mu.Unlock()
+		s.stepFailed(ctx, stepSweep, err)
+	}
+
+	ids, err := s.st.RunningIDs(ctx)
+	if err != nil {
+		failed(err)
+		return
+	}
+	if !s.anyUnheld(ids) {
+		s.stepOK(stepSweep)
+		return
+	}
+
+	var requeued int64
+	err = s.tx.Write(ctx, func(ctx context.Context) error {
+		// Under the writer no claim or finish commits, so the registry
+		// holds exactly this process's running jobs.
+		s.mu.Lock()
+		except := slices.Sorted(maps.Keys(s.jobs))
+		s.mu.Unlock()
+		var err error
+		requeued, err = s.st.RequeueRunning(ctx, except, lastErrOrphan, now)
+		return err
+	})
+	if err != nil {
+		failed(err)
+		return
+	}
+	s.stepOK(stepSweep)
+	if requeued > 0 {
+		s.log.Warn("orphaned jobs requeued", "count", requeued)
+		s.wake()
+	}
+}
+
+// anyUnheld reports whether an id in ids is not in the registry.
+func (s *Scheduler) anyUnheld(ids []int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range ids {
+		if _, held := s.jobs[id]; !held {
+			return true
 		}
 	}
+	return false
 }
 
 // claimKind claims due jobs of k, one Write each, while k has a free slot
 // and a job was claimed. A claim-time hook failure puts that job in hook
-// backoff and claims again at once, so it never blocks the kind.
-func (s *Scheduler) claimKind(ctx context.Context, k *kindState) {
+// backoff and claims again at once, so it never blocks the kind; it is not
+// a step failure. It returns the error of a failed claim, or ctx's once
+// ctx is done.
+func (s *Scheduler) claimKind(ctx context.Context, k *kindState) error {
 	// hookFailed holds the jobs whose hook failed in this round; they are
 	// skipped even if their backoff has already run out.
 	var hookFailed []int64
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		s.mu.Lock()
 		free := s.freeSlots(k)
 		s.mu.Unlock()
 		if free == 0 {
-			return
+			return nil
 		}
 
 		out, err := s.claim(ctx, k, hookFailed)
 		if err != nil {
-			s.stepFailed(ctx, "claim", k.kind.Name, err)
-			return
+			return err
 		}
 		switch out.result {
 		case claimNone:
-			return
+			return nil
 		case claimStarted:
 			continue
 		case claimHookFailed:
-			if ctx.Err() != nil {
-				return // shutting down: not a hook failure
+			if err := ctx.Err(); err != nil {
+				return err // shutting down: not a hook failure
 			}
 			hookFailed = append(hookFailed, out.hookID)
 			s.backOffHook(out.hookID)
@@ -100,7 +269,8 @@ func (s *Scheduler) claimKind(ctx context.Context, k *kindState) {
 // checked again under s.mu, reserved and the job registered in the same
 // critical section, then the job is marked running. If the Write fails,
 // the reservation and registration are undone. Once it commits, the
-// handler always starts.
+// handler always starts. The Write refuses to claim once ctx is done, so a
+// job queued after shutdown began is never claimed.
 func (s *Scheduler) claim(ctx context.Context, k *kindState, skip []int64) (claimOutcome, error) {
 	var (
 		out       claimOutcome
@@ -110,6 +280,9 @@ func (s *Scheduler) claim(ctx context.Context, k *kindState, skip []int64) (clai
 	skip = append(s.hookSkip(s.clock.Now()), skip...)
 	err := s.tx.Write(ctx, func(ctx context.Context) error {
 		out, entry, exhausted = claimOutcome{}, nil, nil
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		now := s.clock.Now()
 		for {
 			row, ok, err := s.st.NextDue(ctx, k.kind.Name, now, skip)
@@ -166,6 +339,9 @@ func (s *Scheduler) claim(ctx context.Context, k *kindState, skip []int64) (clai
 	}
 	if entry != nil {
 		s.log.Debug("job claimed", "kind", entry.job.Kind, "id", entry.job.ID, "attempt", entry.job.Attempt)
+		s.mu.Lock()
+		s.handlers++
+		s.mu.Unlock()
 		s.jobWG.Add(1)
 		go s.runJob(entry)
 	}
@@ -207,13 +383,25 @@ func (s *Scheduler) release(e *jobEntry) {
 
 // hookSkip returns the ids of the jobs whose claim-time hook backoff has
 // not run out at now.
+//
+// It also prunes entries that ran out more than the longest hook backoff
+// ago. An entry runs out and its job is claimed again at the next tick
+// with a free slot, so a live entry is renewed long before that; a stale
+// one belongs to a job that left the queue another way. That happens when
+// Cancel commits between a claim Write whose hook failed and its
+// backOffHook call: Cancel deletes the entry, then backOffHook creates it
+// again for a job that is no longer queued.
 func (s *Scheduler) hookSkip(now time.Time) []int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var ids []int64
 	for _, id := range slices.Sorted(maps.Keys(s.hookBackoff)) {
-		if s.hookBackoff[id].until.After(now) {
+		r := s.hookBackoff[id]
+		switch {
+		case r.until.After(now):
 			ids = append(ids, id)
+		case now.Sub(r.until) > s.t.hookBackoffMax:
+			delete(s.hookBackoff, id)
 		}
 	}
 	return ids
@@ -235,17 +423,64 @@ func (s *Scheduler) backOffHook(id int64) {
 	r.next = min(2*r.next, s.t.hookBackoffMax)
 }
 
-// stepFailed logs a failed dispatcher step (for a kind, when kind is not
-// ""), with its error scrubbed and cut. While ctx is done the scheduler is
-// shutting down, so the failure is not one and is not logged.
-func (s *Scheduler) stepFailed(ctx context.Context, step, kind string, err error) {
+// stepReadyNow reports whether step may run at now: it is not in error
+// backoff.
+func (s *Scheduler) stepReadyNow(step string, now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stepReady(step, now)
+}
+
+// stepReady is stepReadyNow for a caller that holds s.mu.
+func (s *Scheduler) stepReady(step string, now time.Time) bool {
+	return !now.Before(s.steps[step].until)
+}
+
+// stepOK resets step's backoff after it succeeded.
+func (s *Scheduler) stepOK(step string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stepSucceeded(step)
+}
+
+// stepSucceeded is stepOK for a caller that holds s.mu. The last log time
+// is kept, so a flapping step still logs at most once a minute.
+func (s *Scheduler) stepSucceeded(step string) {
+	st := s.steps[step]
+	st.failures = 0
+	st.until = time.Time{}
+}
+
+// stepFailed records a failed dispatcher step: the step is skipped for
+// min(2^(failures-1) s, 30 s) and the failure is logged at most once a
+// minute per step, with its error scrubbed and cut. While ctx (Run's) is
+// done the scheduler is shutting down, so the failure is not one: it is
+// neither logged nor backed off.
+func (s *Scheduler) stepFailed(ctx context.Context, step string, err error) {
 	if ctx.Err() != nil {
 		return
 	}
-	attrs := []any{"step", step}
-	if kind != "" {
-		attrs = append(attrs, "kind", kind)
+	now := s.clock.Now()
+	s.mu.Lock()
+	st := s.steps[step]
+	st.failures++
+	st.until = now.Add(stepBackoff(st.failures, s.t.stepBackoffMax))
+	logIt := st.lastLog.IsZero() || now.Sub(st.lastLog) >= stepLogEvery
+	if logIt {
+		st.lastLog = now
 	}
-	attrs = append(attrs, "error", s.errorText(err.Error()))
-	s.log.Error("job step failed", attrs...)
+	s.mu.Unlock()
+	if logIt {
+		s.log.Error("job scheduler step failed", "step", step, "error", s.errorText(err.Error()))
+	}
+}
+
+// stepBackoff returns the backoff after a step's failures-th consecutive
+// failure: 1 s, doubling, at most limit.
+func stepBackoff(failures int, limit time.Duration) time.Duration {
+	d := time.Second
+	for i := 1; i < failures && d < limit; i++ {
+		d *= 2
+	}
+	return min(d, limit)
 }

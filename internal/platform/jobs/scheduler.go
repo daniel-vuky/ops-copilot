@@ -50,7 +50,8 @@ type Scheduler struct {
 	nudge chan struct{}
 
 	// jobWG counts the job goroutines started by claims and not yet
-	// returned.
+	// returned. Add is called only by a tick, after its claim commits, so
+	// Run joins its tick loop before it waits.
 	jobWG sync.WaitGroup
 
 	// seams are test hooks set through export_test.go; nil in production.
@@ -77,6 +78,14 @@ type Scheduler struct {
 	// recovered is set once Recover has completed; Register is refused
 	// after it and Run requires it.
 	recovered bool
+	// runStarted is set by the first Run; a second Run is refused.
+	runStarted bool
+	// lastSweep is when the orphan sweep last ran (Recover counts as one,
+	// since it requeues every running job).
+	lastSweep time.Time
+	// handlers counts the job goroutines started and not yet returned, as
+	// jobWG does, for Run's shutdown report.
+	handlers int
 }
 
 // testSeams are hooks tests set through export_test.go, before the first
@@ -118,8 +127,7 @@ func defaultTimings() timings {
 
 // kindState is a registered kind with its dispatcher state. Its kind and
 // retry never change after Register; the dispatcher state (running count,
-// and the last ensured period the later tasks add) is guarded by
-// Scheduler.mu.
+// last ensured period) is guarded by Scheduler.mu.
 type kindState struct {
 	kind  Kind            // normalised by Register
 	retry []time.Duration // resolved delays, own copy; empty means one attempt
@@ -128,6 +136,10 @@ type kindState struct {
 	// whose finish has not been recorded or given up. Guarded by
 	// Scheduler.mu.
 	running int
+	// lastPeriod is the latest period start this process ensured for a
+	// recurring kind (inserted, or found taken); zero before the first.
+	// Guarded by Scheduler.mu.
+	lastPeriod time.Time
 }
 
 // maxAttempts returns the kind's number of attempts: 1 with NoRetry, 3
@@ -168,9 +180,13 @@ type jobEntry struct {
 	finishing bool
 }
 
-// stepState is the error backoff of one dispatcher step. The dispatcher
-// adds its fields (consecutive failures, skip-until time, last log time).
-type stepState struct{}
+// stepState is the error backoff of one dispatcher step. Guarded by
+// Scheduler.mu.
+type stepState struct {
+	failures int       // consecutive failures
+	until    time.Time // the step is skipped while now is before until
+	lastLog  time.Time // when its failure was last logged; zero for never
+}
 
 // hookRetry is the backoff of a job whose claim-time hook failed. Guarded
 // by Scheduler.mu.
@@ -204,7 +220,7 @@ func New(st Store, tx store.Transactor, opts Options) *Scheduler {
 		nudge:       make(chan struct{}, 1),
 		kinds:       make(map[string]*kindState),
 		jobs:        make(map[int64]*jobEntry),
-		steps:       make(map[string]*stepState),
+		steps:       map[string]*stepState{stepDue: {}, stepSweep: {}},
 		hookBackoff: make(map[int64]*hookRetry),
 	}
 }
@@ -262,6 +278,10 @@ func (s *Scheduler) Register(k Kind) error {
 		return fmt.Errorf("jobs: register %q: kind already registered", k.Name)
 	}
 	s.kinds[k.Name] = ks
+	s.steps[claimStep(k.Name)] = &stepState{}
+	if ks.kind.Every > 0 {
+		s.steps[periodsStep(k.Name)] = &stepState{}
+	}
 	return nil
 }
 
@@ -336,6 +356,9 @@ const maxRawError = 16 << 10
 
 // errRecoverTwice is returned by a second call of Recover.
 var errRecoverTwice = errors.New("jobs: Recover already ran")
+
+// errRunTwice is returned by a second call of Run.
+var errRunTwice = errors.New("jobs: Run already called")
 
 // errorText returns text scrubbed and cut, ready to store or log (ADR 0006
 // §7).
@@ -605,10 +628,93 @@ func (s *Scheduler) requeueAtStart(ctx context.Context) error {
 	}
 	s.recovered = true
 	s.recovering = false
+	s.lastSweep = now
 	s.mu.Unlock()
 
 	if len(unknown) > 0 {
 		s.log.WarnContext(ctx, "queued jobs of unregistered kinds", slog.Group("kinds", unknown...))
 	}
 	return nil
+}
+
+// Run is the dispatcher (ADR 0001 §6, ADR 0006). Call it once, after
+// Recover; without Recover it returns ErrNotRecovered.
+//
+// It ticks at once, then on every poll interval and on every nudge (an
+// Enqueue, a finish), until ctx ends; ctx is checked before each tick, and
+// a step failing while ctx is done is not a failure. Then it shuts down
+// (ADR 0006 §8): it stops ticking, so nothing more is claimed, and waits
+// up to the drain timeout (6 s) for running handlers; then it cancels
+// their contexts, which also cuts the remaining finish-retry delays, and
+// waits up to the cancel wait (2 s) more. It returns nil when every
+// handler returned, else an error naming how many are still running;
+// their rows stay running and the next start requeues them.
+func (s *Scheduler) Run(ctx context.Context) error {
+	s.mu.Lock()
+	switch {
+	case !s.recovered:
+		s.mu.Unlock()
+		return ErrNotRecovered
+	case s.runStarted:
+		s.mu.Unlock()
+		return errRunTwice
+	}
+	s.runStarted = true
+	s.mu.Unlock()
+
+	s.loop(ctx)
+	return s.drain()
+}
+
+// loop ticks in Run's goroutine until ctx ends, so when it returns no
+// tick is running and no claim can start another job.
+func (s *Scheduler) loop(ctx context.Context) {
+	ticker := time.NewTicker(s.t.poll)
+	defer ticker.Stop()
+	for ctx.Err() == nil {
+		s.tick(ctx)
+		select {
+		case <-ctx.Done():
+		case <-ticker.C:
+		case <-s.nudge:
+		}
+	}
+}
+
+// drain waits for the job goroutines after the loop stopped: up to the
+// drain timeout, then, with the job context cancelled (cause errDrain), up
+// to the cancel wait. A handler that never returns keeps the waiting
+// goroutine too, until the process exits.
+func (s *Scheduler) drain() error {
+	done := make(chan struct{})
+	go func() {
+		s.jobWG.Wait() // no Add can follow: the loop has stopped
+		close(done)
+	}()
+	if waitFor(done, s.t.drain) {
+		return nil
+	}
+	s.cancelJobs(errDrain)
+	if waitFor(done, s.t.cancelWait) {
+		return nil
+	}
+	s.mu.Lock()
+	n := s.handlers
+	s.mu.Unlock()
+	if n == 0 { // the last one returned just now
+		return nil
+	}
+	return fmt.Errorf("jobs: %d handlers still running after shutdown", n)
+}
+
+// waitFor reports whether done closes within d.
+func waitFor(done <-chan struct{}, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-done:
+		return true
+	case <-t.C:
+		return false
+	}
 }

@@ -28,32 +28,52 @@ type finishResult struct {
 	now     time.Time     // when the finish was recorded
 }
 
+// errHandlerExited is the error of an attempt whose handler called
+// runtime.Goexit instead of returning.
+var errHandlerExited = errors.New("handler exited without returning (runtime.Goexit)")
+
 // runJob is the goroutine of one claimed job: it runs the handler, unless
-// the job was stopped before it started, then records the finish.
+// the job was stopped before it started, then records the finish. The
+// finish is deferred, so it also runs when the handler calls
+// runtime.Goexit, and the slot is always released.
 func (s *Scheduler) runJob(e *jobEntry) {
-	defer s.jobWG.Done()
+	defer s.jobDone()
+
+	var (
+		herr     error
+		stack    []byte
+		returned bool
+	)
+	defer func() {
+		if !returned {
+			herr, stack = errHandlerExited, nil
+		}
+		if f := s.seams.beforeFinish; f != nil {
+			f(e.job)
+		}
+		s.finish(e, herr, stack)
+	}()
+
 	if f := s.seams.beforeHandler; f != nil {
 		f(e.job)
 	}
-
 	s.mu.Lock()
 	stopped := e.stopped
 	s.mu.Unlock()
-
-	var (
-		herr  error
-		stack []byte
-	)
 	if stopped {
 		herr = ErrStopped
 	} else {
 		stack, herr = s.callHandler(e)
 	}
+	returned = true
+}
 
-	if f := s.seams.beforeFinish; f != nil {
-		f(e.job)
-	}
-	s.finish(e, herr, stack)
+// jobDone ends a job goroutine's count.
+func (s *Scheduler) jobDone() {
+	s.mu.Lock()
+	s.handlers--
+	s.mu.Unlock()
+	s.jobWG.Done()
 }
 
 // callHandler runs e's handler with e's context. A panic is recovered as
@@ -72,10 +92,12 @@ func (s *Scheduler) callHandler(e *jobEntry) (stack []byte, err error) {
 // panic stack, if any), then frees e's slot and nudges the dispatcher.
 //
 // Each try is one Write with a context detached from shutdown, bounded by
-// the finish timeout; there are three tries (at once, +1 s, +5 s). A row
-// found in another state is logged and not tried again. If every try
-// fails, the slot is released anyway and the row stays running until the
-// orphan sweep requeues it.
+// the finish timeout; there are three tries (at once, +1 s, +5 s). Once
+// the drain timeout has passed, the remaining tries run without delay, so
+// shutdown stays within its budget. A failed try before the last is logged
+// at warn. A row found in another state is logged and not tried again. If
+// every try fails, the slot is released anyway and the row stays running
+// until the orphan sweep requeues it.
 func (s *Scheduler) finish(e *jobEntry, herr error, stack []byte) {
 	defer func() {
 		s.release(e)
@@ -84,12 +106,12 @@ func (s *Scheduler) finish(e *jobEntry, herr error, stack []byte) {
 
 	var text string
 	if herr != nil {
-		text = s.errorText(herr.Error())
+		text = s.handlerErrorText(herr)
 	}
 	var lastErr error
-	for _, delay := range s.t.finishRetries {
+	for i, delay := range s.t.finishRetries {
 		if delay > 0 {
-			time.Sleep(delay)
+			s.finishDelay(delay)
 		}
 		res, err := s.recordFinish(e, herr, text)
 		if err == nil {
@@ -97,6 +119,10 @@ func (s *Scheduler) finish(e *jobEntry, herr error, stack []byte) {
 			return
 		}
 		lastErr = err
+		if i < len(s.t.finishRetries)-1 {
+			s.log.Warn("job finish try failed", "kind", e.job.Kind, "id", e.job.ID,
+				"try", i+1, "error", s.errorText(err.Error()))
+		}
 	}
 
 	attrs := []any{"kind", e.job.Kind, "id", e.job.ID, "attempt", e.job.Attempt}
@@ -107,6 +133,29 @@ func (s *Scheduler) finish(e *jobEntry, herr error, stack []byte) {
 		attrs = append(attrs, "handler_error", text)
 	}
 	s.log.Error("job finish not recorded", attrs...)
+}
+
+// finishDelay waits d before a finish try, or less if the job context is
+// cancelled meanwhile: only Run cancels it, with errDrain, when the drain
+// timeout passes.
+func (s *Scheduler) finishDelay(d time.Duration) {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+	case <-s.jobCtx.Done():
+	}
+}
+
+// handlerErrorText returns herr's text, scrubbed and cut. A typed-nil
+// error or an Error method that panics gives "panic: <value>" instead.
+func (s *Scheduler) handlerErrorText(herr error) (text string) {
+	defer func() {
+		if v := recover(); v != nil {
+			text = s.errorText(fmt.Sprintf("panic: %v", v))
+		}
+	}()
+	return s.errorText(herr.Error())
 }
 
 // recordFinish runs one finish Write for e. Under s.mu it reads e's
@@ -194,8 +243,10 @@ func (s *Scheduler) markFinish(ctx context.Context, e *jobEntry, res finishResul
 	}
 }
 
-// logFinish logs a recorded finish. The error is the scrubbed text stored
-// as last_error; the payload is never logged.
+// logFinish logs a recorded finish. Its error is text, the scrubbed
+// handler error: for every outcome but finishInterrupted it is also the
+// stored last_error; an interrupted job stores "interrupted by shutdown"
+// and the log carries the handler's text. The payload is never logged.
 func (s *Scheduler) logFinish(e *jobEntry, res finishResult, text string, stack []byte) {
 	attrs := []any{"kind", e.job.Kind, "id", e.job.ID, "attempt", e.job.Attempt}
 	withErr := func(extra ...any) []any {
@@ -233,7 +284,7 @@ func (s *Scheduler) logFinish(e *jobEntry, res finishResult, text string, stack 
 // finish is already being written; if the row is still queued or running
 // then, re-read it and call Cancel again. Owners that must not run again
 // record "cancel requested" in their own row, and their handler checks it
-// (ADR 0006 §3).
+// (ADR 0006 §1: delivery is at least once).
 //
 // Protocol (ADR 0006 §3): call Cancel inside the domain's Write; on
 // ErrNotCancellable, call Stop after that Write commits.

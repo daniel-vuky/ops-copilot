@@ -33,6 +33,10 @@ type TestTimings struct {
 	FinishTimeout  time.Duration
 	HookBackoff    time.Duration
 	HookBackoffMax time.Duration
+	Poll           time.Duration // Run's tick without a nudge
+	Drain          time.Duration // shutdown wait for running handlers
+	CancelWait     time.Duration // shutdown wait after cancelling them
+	SweepEvery     time.Duration // orphan sweep interval
 }
 
 // SetTimingsForTest applies t. Call it before the first tick.
@@ -48,6 +52,18 @@ func (s *Scheduler) SetTimingsForTest(t TestTimings) {
 	}
 	if t.HookBackoffMax > 0 {
 		s.t.hookBackoffMax = t.HookBackoffMax
+	}
+	if t.Poll > 0 {
+		s.t.poll = t.Poll
+	}
+	if t.Drain > 0 {
+		s.t.drain = t.Drain
+	}
+	if t.CancelWait > 0 {
+		s.t.cancelWait = t.CancelWait
+	}
+	if t.SweepEvery > 0 {
+		s.t.sweepEvery = t.SweepEvery
 	}
 }
 
