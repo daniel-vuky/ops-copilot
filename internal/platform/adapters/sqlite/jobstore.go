@@ -40,6 +40,9 @@ func (s *JobStore) tx(ctx context.Context, op string) (Querier, error) {
 
 // Insert implements jobs.Store.
 func (s *JobStore) Insert(ctx context.Context, j jobs.NewJob) (int64, bool, error) {
+	if j.Now.IsZero() || j.RunAfter.IsZero() {
+		return 0, false, fmt.Errorf("jobs store: insert %s: Now and RunAfter must be set", j.Kind)
+	}
 	q, err := s.tx(ctx, "insert")
 	if err != nil {
 		return 0, false, err
@@ -128,7 +131,7 @@ func (s *JobStore) MarkRetry(ctx context.Context, id int64, runAfter time.Time, 
 	return s.update(ctx, "mark retry", id, `UPDATE jobs
 		SET state = ?, run_after_at = ?, last_error = ?, updated_at = ?
 		WHERE id = ? AND state = ?`,
-		string(jobs.StateQueued), runAfter, lastErr, now, id, string(jobs.StateRunning))
+		string(jobs.StateQueued), runAfter, nullString(lastErr), now, id, string(jobs.StateRunning))
 }
 
 // MarkFinal implements jobs.Store.
@@ -158,7 +161,7 @@ func (s *JobStore) RequeueRunning(ctx context.Context, except []int64, lastErr s
 		return 0, err
 	}
 	notIn, idArgs := notInIDs(except)
-	args := append([]any{string(jobs.StateQueued), now, lastErr, now, string(jobs.StateRunning)}, idArgs...)
+	args := append([]any{string(jobs.StateQueued), now, nullString(lastErr), now, string(jobs.StateRunning)}, idArgs...)
 	res, err := q.ExecContext(ctx, `UPDATE jobs
 		SET state = ?, run_after_at = ?, last_error = ?, updated_at = ?
 		WHERE state = ?`+notIn, args...)
@@ -204,9 +207,11 @@ func (s *JobStore) Get(ctx context.Context, id int64) (jobs.Row, bool, error) {
 }
 
 // DueKinds implements jobs.Store.
-func (s *JobStore) DueKinds(ctx context.Context, now time.Time) ([]string, error) {
+func (s *JobStore) DueKinds(ctx context.Context, now time.Time, skip []int64) ([]string, error) {
+	notIn, idArgs := notInIDs(skip)
+	args := append([]any{string(jobs.StateQueued), now}, idArgs...)
 	rows, err := s.db.Reader().QueryContext(ctx, `SELECT DISTINCT kind FROM jobs
-		WHERE state = ? AND run_after_at <= ? ORDER BY kind`, string(jobs.StateQueued), now)
+		WHERE state = ? AND run_after_at <= ?`+notIn+` ORDER BY kind`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("jobs store: due kinds: %w", err)
 	}

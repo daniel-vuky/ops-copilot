@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"maps"
 	"regexp"
+	"runtime/debug"
 	"slices"
 	"sync"
 	"time"
@@ -48,6 +49,13 @@ type Scheduler struct {
 	// nudge wakes the dispatcher at once; sends never block (cap 1).
 	nudge chan struct{}
 
+	// jobWG counts the job goroutines started by claims and not yet
+	// returned.
+	jobWG sync.WaitGroup
+
+	// seams are test hooks set through export_test.go; nil in production.
+	seams testSeams
+
 	// mu guards everything below. It is never held while a Write, a store
 	// method, a handler or a hook runs; a Write fn may take it briefly.
 	mu sync.Mutex
@@ -63,9 +71,20 @@ type Scheduler struct {
 	// hookBackoff holds, by job id, the jobs whose FailedHook failed on
 	// the claim-time path and when they may be tried again.
 	hookBackoff map[int64]*hookRetry
+	// recovering is set while Recover runs, so a second call is refused
+	// at once; it is cleared when Recover fails.
+	recovering bool
 	// recovered is set once Recover has completed; Register is refused
 	// after it and Run requires it.
 	recovered bool
+}
+
+// testSeams are hooks tests set through export_test.go, before the first
+// tick. Each is nil in production.
+type testSeams struct {
+	beforeHandler func(Job) // after the claim commits, before the stopped check
+	beforeFinish  func(Job) // after the handler returns, before finish
+	finishWrite   func(Job) // inside each finish Write fn, once finishing is set
 }
 
 // timings are the scheduler's intervals. Tests lower them through
@@ -126,17 +145,39 @@ func (k *kindState) delay(attempt int) time.Duration {
 	return k.retry[attempt-1]
 }
 
-// jobEntry is a claimed job in the registry. The claim and finish add its
-// fields (kind, handler cancel func, sticky stopped flag, finishing flag).
-type jobEntry struct{}
+// jobEntry is a claimed job in the registry, from its claim until its
+// finish is recorded or given up. job, kind, ctx, cancel, stopTimer and
+// start never change after the claim; stopped and finishing are guarded by
+// Scheduler.mu.
+type jobEntry struct {
+	job  Job        // as the handler sees it: Attempt is the one claimed
+	kind *kindState // the job's kind
+	// ctx is the handler's context: a child of Scheduler.jobCtx with the
+	// kind's Timeout. cancel ends it with a cause (ErrStopped for Stop);
+	// stopTimer releases the timeout's resources.
+	ctx       context.Context
+	cancel    context.CancelCauseFunc
+	stopTimer context.CancelFunc
+	start     time.Time // claim time, from the clock
+
+	// stopped is set by Stop and never cleared: the job ends cancelled
+	// unless its handler returns nil.
+	stopped bool
+	// finishing is set inside a finish Write; Stop then returns false. It
+	// is cleared when that Write fails.
+	finishing bool
+}
 
 // stepState is the error backoff of one dispatcher step. The dispatcher
 // adds its fields (consecutive failures, skip-until time, last log time).
 type stepState struct{}
 
-// hookRetry is the backoff of a job whose claim-time hook failed. The
-// claim adds its fields (skip-until time, next delay).
-type hookRetry struct{}
+// hookRetry is the backoff of a job whose claim-time hook failed. Guarded
+// by Scheduler.mu.
+type hookRetry struct {
+	until time.Time     // the job is skipped while now is before until
+	next  time.Duration // backoff after its next failure
+}
 
 // New returns a Scheduler on st, writing through tx. Register kinds on it,
 // then call Recover and Run.
@@ -214,7 +255,7 @@ func (s *Scheduler) Register(k Kind) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.recovered {
+	if s.recovered || s.recovering {
 		return fmt.Errorf("jobs: register %q: %w", k.Name, errRegisterAfterRecover)
 	}
 	if _, dup := s.kinds[k.Name]; dup {
@@ -281,6 +322,14 @@ func validateKind(k Kind) error {
 // lastErrRestart is the last error of a job Recover requeued.
 const lastErrRestart = "interrupted by a restart"
 
+// lastErrShutdown is the last error of a job whose attempt the drain
+// deadline cut off.
+const lastErrShutdown = "interrupted by shutdown"
+
+// errDrain is the cause of jobCtx once the drain timeout has passed: a
+// handler error after it means "interrupted by shutdown".
+var errDrain = errors.New("jobs: drain timeout passed")
+
 // maxRawError is how much of an error text is scrubbed: the text is cut to
 // it before scrubbing and to maxErrorBytes after.
 const maxRawError = 16 << 10
@@ -311,6 +360,8 @@ func RunAfter(t time.Time) EnqueueOption {
 
 // UniqueKey gives the job key k, 1 to 128 bytes: while a queued or running
 // job of the kind has the same key, Enqueue refuses with ErrAlreadyActive.
+// The key is a reference, such as "all" or an id: it appears in error
+// text, so it must hold no secret.
 // A recurring kind's period jobs carry its PeriodKey, so a manual job with
 // that key never overlaps a period's job (ADR 0006 §5). A key outside 1 to
 // 128 bytes makes Enqueue fail.
@@ -446,17 +497,22 @@ func (s *Scheduler) Cancel(ctx context.Context, kind string, id int64) error {
 	if !changed {
 		return fmt.Errorf("jobs: cancel %q job %d: job is no longer queued: %w", kind, id, ErrNotCancellable)
 	}
-	if err := s.runHook(ctx, k, row, ReasonCancelled, row.LastError); err != nil {
+	if err := s.runHook(ctx, k, jobOf(k, row), ReasonCancelled, row.LastError); err != nil {
 		return fmt.Errorf("jobs: cancel %q job %d: failure hook: %w", kind, id, err)
 	}
 
+	// The hook-backoff entry goes before the caller commits; if the
+	// caller's Write rolls back, the entry is lost and the job's next hook
+	// failure starts a fresh backoff, which is harmless.
 	s.mu.Lock()
 	delete(s.hookBackoff, id)
 	s.mu.Unlock()
 	return nil
 }
 
-// jobOf returns the Job a handler or hook of k sees for row.
+// jobOf returns the Job a hook of k sees for row: Attempt is row.Attempts,
+// the attempts started (0 for a job never claimed). The claim adds one for
+// the attempt it starts, so a handler sees Attempt 1 the first time.
 func jobOf(k *kindState, row Row) Job {
 	return Job{
 		ID:          row.ID,
@@ -469,20 +525,23 @@ func jobOf(k *kindState, row Row) Job {
 	}
 }
 
-// runHook runs k's OnFailed, if any, for row with ctx, the ctx of the
+// runHook runs k's OnFailed, if any, for job with ctx, the ctx of the
 // Write that marks the job failed or cancelled. A panic is recovered as
-// the error "hook panic: <value>". The returned error's text is scrubbed
-// and cut, and it wraps nothing, so the hook's raw text never escapes.
-func (s *Scheduler) runHook(ctx context.Context, k *kindState, row Row, reason Reason, lastErr string) (err error) {
+// the error "hook panic: <value>" and logged with its stack. The returned
+// error's text is scrubbed and cut, and it wraps nothing, so the hook's
+// raw text never escapes.
+func (s *Scheduler) runHook(ctx context.Context, k *kindState, job Job, reason Reason, lastErr string) (err error) {
 	if k.kind.OnFailed == nil {
 		return nil
 	}
 	defer func() {
 		if v := recover(); v != nil {
+			s.log.Error("job failure hook panicked",
+				"kind", job.Kind, "id", job.ID, "stack", string(debug.Stack()))
 			err = errors.New(s.errorText(fmt.Sprintf("hook panic: %v", v)))
 		}
 	}()
-	if herr := k.kind.OnFailed(ctx, jobOf(k, row), reason, lastErr); herr != nil {
+	if herr := k.kind.OnFailed(ctx, job, reason, lastErr); herr != nil {
 		return errors.New(s.errorText(herr.Error()))
 	}
 	return nil
@@ -498,12 +557,25 @@ func (s *Scheduler) runHook(ctx context.Context, k *kindState, row Row, reason R
 // silently. After it, Register fails. An error should fail the start.
 func (s *Scheduler) Recover(ctx context.Context) error {
 	s.mu.Lock()
-	done := s.recovered
-	s.mu.Unlock()
-	if done {
+	if s.recovered || s.recovering {
+		s.mu.Unlock()
 		return errRecoverTwice
 	}
+	s.recovering = true
+	s.mu.Unlock()
 
+	if err := s.requeueAtStart(ctx); err != nil {
+		s.mu.Lock()
+		s.recovering = false
+		s.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
+// requeueAtStart is the body of Recover, run by the one call that set
+// s.recovering.
+func (s *Scheduler) requeueAtStart(ctx context.Context) error {
 	now := s.clock.Now()
 	var requeued int64
 	err := s.tx.Write(ctx, func(ctx context.Context) error {
@@ -532,6 +604,7 @@ func (s *Scheduler) Recover(ctx context.Context) error {
 		}
 	}
 	s.recovered = true
+	s.recovering = false
 	s.mu.Unlock()
 
 	if len(unknown) > 0 {

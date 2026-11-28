@@ -14,9 +14,10 @@ type Job struct {
 	Kind string
 	// Payload holds references (ids), not content. It is never logged.
 	Payload []byte
-	// Attempt is 1 for the first attempt. Attempts are counted at claim,
-	// so one cut off by a restart, a shutdown or a lost finish still
-	// counts (ADR 0006 §2).
+	// Attempt is the attempt a handler runs, 1 for the first. Attempts
+	// are counted at claim, so one cut off by a restart, a shutdown or a
+	// lost finish still counts (ADR 0006 §2). A FailedHook sees the
+	// attempts started: 0 for a job cancelled before its first claim.
 	Attempt int
 	// MaxAttempts is the kind's number of attempts.
 	MaxAttempts int

@@ -72,6 +72,7 @@ type Store interface {
 	// Insert adds j as a queued job. When j conflicts with an existing
 	// job of its kind (same PeriodAt, or same UniqueKey while that job is
 	// active), nothing is inserted and Insert returns (0, false, nil).
+	// A zero j.Now or j.RunAfter is an error.
 	Insert(ctx context.Context, j NewJob) (id int64, inserted bool, err error)
 	// CountQueued returns the number of queued jobs of kind, due or not.
 	CountQueued(ctx context.Context, kind string) (int, error)
@@ -86,15 +87,16 @@ type Store interface {
 	// FinishedAt is now and LastError is cleared.
 	MarkSucceeded(ctx context.Context, id int64, now time.Time) (bool, error)
 	// MarkRetry puts a running job back in the queue, due at runAfter,
-	// with lastErr as its LastError.
+	// with lastErr as its LastError ("" stores none).
 	MarkRetry(ctx context.Context, id int64, runAfter time.Time, lastErr string, now time.Time) (bool, error)
 	// MarkFinal moves a job from state from (queued or running) to state
 	// to (failed or cancelled) and sets FinishedAt. A nil lastErr keeps
 	// the stored LastError. Any other from or to is an error.
 	MarkFinal(ctx context.Context, id int64, from, to State, lastErr *string, now time.Time) (bool, error)
 	// RequeueRunning puts every running job whose id is not in except
-	// back in the queue, due now, with lastErr as its LastError and its
-	// attempts unchanged. It returns the number of jobs requeued.
+	// back in the queue, due now, with lastErr as its LastError ("" stores
+	// none) and its attempts unchanged. It returns the number of jobs
+	// requeued.
 	RequeueRunning(ctx context.Context, except []int64, lastErr string, now time.Time) (int64, error)
 
 	// Get returns job id, read in the Write that ctx carries if any (so it
@@ -103,8 +105,10 @@ type Store interface {
 	Get(ctx context.Context, id int64) (r Row, ok bool, err error)
 
 	// DueKinds returns, in order, the kinds with a queued job due at or
-	// before now. It reads from the readers, outside any Write.
-	DueKinds(ctx context.Context, now time.Time) ([]string, error)
+	// before now whose id is not in skip, so a kind whose only due jobs
+	// are skipped is not returned. It reads from the readers, outside any
+	// Write.
+	DueKinds(ctx context.Context, now time.Time, skip []int64) ([]string, error)
 	// RunningIDs returns the ids of the running jobs in order. It reads
 	// from the readers, outside any Write.
 	RunningIDs(ctx context.Context) ([]int64, error)

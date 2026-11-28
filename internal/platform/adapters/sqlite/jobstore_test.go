@@ -129,8 +129,56 @@ func TestJobsTableIsStrict(t *testing.T) {
 			VALUES ('k', x'', 'queued', '2026-11-28', 1, 1)`)
 		return err
 	})
-	if err == nil {
-		t.Error("inserting text into run_after_at succeeded, want an error")
+	if err == nil || !strings.Contains(err.Error(), "cannot store TEXT") {
+		t.Errorf("inserting text into run_after_at = %v, want a STRICT %q error", err, "cannot store TEXT")
+	}
+}
+
+func TestInsertRejectsZeroTimes(t *testing.T) {
+	t.Parallel()
+	db, s := openJobs(t)
+
+	noNow := newJob("k", jobNow)
+	noNow.Now = time.Time{}
+	noRunAfter := newJob("k", time.Time{})
+	for name, j := range map[string]jobs.NewJob{"zero Now": noNow, "zero RunAfter": noRunAfter} {
+		err := db.Write(t.Context(), func(ctx context.Context) error {
+			_, _, err := s.Insert(ctx, j)
+			return err
+		})
+		if err == nil {
+			t.Errorf("Insert with %s succeeded, want an error", name)
+		}
+	}
+	if n := jobCount(t, db); n != 0 {
+		t.Errorf("jobs rows = %d, want 0", n)
+	}
+}
+
+func TestEmptyLastErrorIsNull(t *testing.T) {
+	t.Parallel()
+	db, s := openJobs(t)
+
+	retried := mustInsert(t, db, s, newJob("k", jobNow))
+	requeued := mustInsert(t, db, s, newJob("k", jobNow))
+	for _, id := range []int64{retried, requeued} {
+		mark(t, db, func(ctx context.Context) (bool, error) { return s.MarkRunning(ctx, id, jobNow) })
+	}
+	mark(t, db, func(ctx context.Context) (bool, error) { return s.MarkRetry(ctx, retried, jobNow, "", jobNow) })
+	write(t, db, func(ctx context.Context) error {
+		_, err := s.RequeueRunning(ctx, nil, "", jobNow)
+		return err
+	})
+	for _, id := range []int64{retried, requeued} {
+		var typ string
+		err := db.Reader().QueryRowContext(t.Context(),
+			"SELECT typeof(last_error) FROM jobs WHERE id = ?", id).Scan(&typ)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if typ != "null" {
+			t.Errorf("job %d last_error stored as %q, want null", id, typ)
+		}
 	}
 }
 
@@ -585,7 +633,7 @@ func TestReaderQueries(t *testing.T) {
 
 	b1 := mustInsert(t, db, s, newJob("b", jobNow.Add(-time.Minute)))
 	mustInsert(t, db, s, newJob("b", jobNow))
-	mustInsert(t, db, s, newJob("a", jobNow.Add(-time.Second)))
+	a1 := mustInsert(t, db, s, newJob("a", jobNow.Add(-time.Second)))
 	mustInsert(t, db, s, newJob("future", jobNow.Add(time.Second)))
 	c1 := mustInsert(t, db, s, newJob("c", jobNow))
 	c2 := mustInsert(t, db, s, newJob("c", jobNow))
@@ -594,12 +642,22 @@ func TestReaderQueries(t *testing.T) {
 	}
 	mark(t, db, func(ctx context.Context) (bool, error) { return s.MarkSucceeded(ctx, c1, jobNow) })
 
-	kinds, err := s.DueKinds(ctx, jobNow)
+	kinds, err := s.DueKinds(ctx, jobNow, nil)
 	if err != nil {
 		t.Fatalf("DueKinds: %v", err)
 	}
 	if want := []string{"a", "b"}; !slices.Equal(kinds, want) {
 		t.Errorf("DueKinds = %v, want %v", kinds, want)
+	}
+
+	// A kind whose only due rows are skipped is not due; one with another
+	// due row still is.
+	kinds, err = s.DueKinds(ctx, jobNow, []int64{b1, a1})
+	if err != nil {
+		t.Fatalf("DueKinds(skip): %v", err)
+	}
+	if want := []string{"b"}; !slices.Equal(kinds, want) {
+		t.Errorf("DueKinds(skip a's job and b's first) = %v, want %v", kinds, want)
 	}
 
 	ids, err := s.RunningIDs(ctx)

@@ -52,10 +52,14 @@ func cutError(s string) string {
 	return cutBytes(s, maxErrorBytes)
 }
 
-// cutBytes cuts s to at most n bytes of valid UTF-8: invalid bytes become
-// U+FFFD first, then the cut moves back to the start of a rune so a
+// cutBytes cuts s to at most n bytes of valid UTF-8: s is first cut to
+// n+utf8.UTFMax bytes (so a long text is not copied whole), invalid bytes
+// become U+FFFD, then the cut moves back to the start of a rune so a
 // multi-byte sequence is never split.
 func cutBytes(s string, n int) string {
+	if len(s) > n+utf8.UTFMax {
+		s = s[:n+utf8.UTFMax]
+	}
 	s = strings.ToValidUTF8(s, "\uFFFD")
 	if len(s) <= n {
 		return s

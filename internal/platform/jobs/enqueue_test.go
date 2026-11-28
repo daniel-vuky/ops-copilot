@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -187,13 +188,23 @@ func TestEnqueueCountsOnlyFreeSlots(t *testing.T) {
 		t.Errorf("enqueue 4 = %v, want ErrQueueFull", errs[3])
 	}
 
-	s.SetRunningForTest("investigate", 2) // no slot free: 3 queued are all waiting
-	err := db.Write(t.Context(), func(ctx context.Context) error {
-		_, err := s.Enqueue(ctx, "investigate", nil)
-		return err
+	// A fresh kind with no slot free: every queued job is waiting.
+	register(t, s, jobs.Kind{Name: "busy", Handler: noop, MaxWaiting: 2, Concurrency: 2})
+	s.SetRunningForTest("busy", 2)
+	var busy [3]error
+	write(t, db, func(ctx context.Context) error {
+		for i := range busy {
+			_, busy[i] = s.Enqueue(ctx, "busy", nil)
+		}
+		return nil
 	})
-	if !errors.Is(err, jobs.ErrQueueFull) {
-		t.Errorf("enqueue with no free slot = %v, want ErrQueueFull", err)
+	for i, err := range busy[:2] {
+		if err != nil {
+			t.Errorf("busy enqueue %d = %v, want nil", i+1, err)
+		}
+	}
+	if !errors.Is(busy[2], jobs.ErrQueueFull) {
+		t.Errorf("busy enqueue 3 = %v, want ErrQueueFull", busy[2])
 	}
 }
 
@@ -289,8 +300,9 @@ func TestCancelQueued(t *testing.T) {
 	if c.reason != jobs.ReasonCancelled || !c.inWrite {
 		t.Errorf("OnFailed reason %v inWrite %v, want cancelled inside the Write", c.reason, c.inWrite)
 	}
-	if c.job.ID != id || c.job.Kind != "investigate" || !bytes.Equal(c.job.Payload, []byte("p")) || c.job.MaxAttempts != 3 {
-		t.Errorf("OnFailed job = %+v, want id %d of investigate with its payload and 3 attempts", c.job, id)
+	if c.job.ID != id || c.job.Kind != "investigate" || !bytes.Equal(c.job.Payload, []byte("p")) ||
+		c.job.MaxAttempts != 3 || c.job.Attempt != 0 {
+		t.Errorf("OnFailed job = %+v, want id %d of investigate with its payload, 3 attempts, none started", c.job, id)
 	}
 	r := jobRow(t, db, id)
 	if r.State != jobs.StateCancelled || r.FinishedAt == nil || !r.FinishedAt.Equal(clk.Now()) {
@@ -339,6 +351,40 @@ func TestCancelNotQueued(t *testing.T) {
 	}
 }
 
+func TestCancelOutsideWrite(t *testing.T) {
+	t.Parallel()
+	db, st := openStore(t)
+	s := newScheduler(t, db, st, newFakeClock())
+	register(t, s, jobs.Kind{Name: "investigate", Handler: noop})
+
+	id := enqueue(t, db, s, "investigate", nil)
+	if err := s.Cancel(t.Context(), "investigate", id); !errors.Is(err, store.ErrNoWriteTx) {
+		t.Errorf("Cancel outside a Write = %v, want store.ErrNoWriteTx", err)
+	}
+	if r := jobRow(t, db, id); r.State != jobs.StateQueued {
+		t.Errorf("row = %q, want still queued", r.State)
+	}
+}
+
+func TestEnqueueThenCancelInOneWrite(t *testing.T) {
+	t.Parallel()
+	db, st := openStore(t)
+	s := newScheduler(t, db, st, newFakeClock())
+	register(t, s, jobs.Kind{Name: "investigate", Handler: noop})
+
+	var id int64
+	write(t, db, func(ctx context.Context) error {
+		var err error
+		if id, err = s.Enqueue(ctx, "investigate", nil); err != nil {
+			return err
+		}
+		return s.Cancel(ctx, "investigate", id)
+	})
+	if r := jobRow(t, db, id); r.State != jobs.StateCancelled {
+		t.Errorf("row = %q, want cancelled", r.State)
+	}
+}
+
 func TestCancelHookErrorRollsBack(t *testing.T) {
 	t.Parallel()
 	db, st := openStore(t)
@@ -369,7 +415,7 @@ func TestCancelHookErrorRollsBack(t *testing.T) {
 func TestHookPanicIsAnError(t *testing.T) {
 	t.Parallel()
 	db, st := openStore(t)
-	s := newScheduler(t, db, st, newFakeClock())
+	s, lb := newLoggedScheduler(t, db, st, newFakeClock())
 	register(t, s, jobs.Kind{
 		Name: "investigate", Handler: noop,
 		OnFailed: func(context.Context, jobs.Job, jobs.Reason, string) error { panic("owner row gone") },
@@ -382,6 +428,13 @@ func TestHookPanicIsAnError(t *testing.T) {
 	}
 	if r := jobRow(t, db, id); r.State != jobs.StateQueued {
 		t.Errorf("row = %q, want still queued", r.State)
+	}
+	lines := lb.lines(t, "job failure hook panicked")
+	if len(lines) != 1 || lines[0]["level"] != "ERROR" || lines[0]["id"] != float64(id) || lines[0]["kind"] != "investigate" {
+		t.Fatalf("job failure hook panicked lines = %v, want one ERROR line for job %d", lines, id)
+	}
+	if stack, _ := lines[0]["stack"].(string); !strings.Contains(stack, "goroutine") {
+		t.Errorf("stack = %q, want a goroutine stack", stack)
 	}
 }
 
@@ -484,5 +537,32 @@ func TestRecoverQuietWhenNothingToDo(t *testing.T) {
 	}
 	if out := lb.String(); out != "" {
 		t.Errorf("log = %q, want nothing", out)
+	}
+}
+
+func TestRecoverRunsOnce(t *testing.T) {
+	t.Parallel()
+	db, st := openStore(t)
+	s := newScheduler(t, db, st, newFakeClock())
+	register(t, s, jobs.Kind{Name: "investigate", Handler: noop})
+
+	var wg sync.WaitGroup
+	errs := make([]error, 4)
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = s.Recover(t.Context())
+		}()
+	}
+	wg.Wait()
+	ok := 0
+	for _, err := range errs {
+		if err == nil {
+			ok++
+		}
+	}
+	if ok != 1 {
+		t.Errorf("concurrent Recover calls: %d succeeded (%v), want exactly 1", ok, errs)
 	}
 }
