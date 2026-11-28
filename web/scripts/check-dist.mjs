@@ -14,12 +14,19 @@ import { join, relative } from "node:path";
 
 const dir = process.argv[2] ?? "dist/app";
 
-/** Lists every regular file under root, recursively. */
+// Paths whose name starts with "." anywhere in the build. The server answers
+// 404 for them, so a dotfile in the build is dead weight or a leak
+// (.DS_Store, .env); they are reported and not descended into.
+const dotted = [];
+
+/** Lists every regular file under root, recursively, minus dotted names. */
 function listFiles(root) {
   const files = [];
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     const path = join(root, entry.name);
-    if (entry.isDirectory()) {
+    if (entry.name.startsWith(".")) {
+      dotted.push(path);
+    } else if (entry.isDirectory()) {
       files.push(...listFiles(path));
     } else if (entry.isFile()) {
       files.push(path);
@@ -29,14 +36,14 @@ function listFiles(root) {
 }
 
 // A remote URL: http:, https: or protocol-relative //, inside url(), href=,
-// src= or @import.
+// src= or @import (minified CSS drops the space: @import"https://...").
 const remoteURL =
-  /(?:url\(\s*['"]?|href\s*=\s*['"]?|src\s*=\s*['"]?|@import\s+(?:url\(\s*)?['"]?)\s*(?:https?:|\/\/)/i;
+  /(?:url\(\s*['"]?|href\s*=\s*['"]?|src\s*=\s*['"]?|@import\s*(?:url\(\s*)?['"]?)\s*(?:https?:|\/\/)/i;
 
 // Inline or page-level constructs the CSP blocks or that change how URLs
 // and policies resolve.
 const htmlRules = [
-  [/<script\b(?![^>]*\bsrc\s*=)[^>]*>/i, "inline <script> (no src=)"],
+  [/<script\b(?![^>]*\ssrc\s*=)[^>]*>/i, "inline <script> (no src=)"],
   [/<style\b/i, "<style> element"],
   [/\sstyle\s*=/i, "style= attribute"],
   [/<base\b/i, "<base> element"],
@@ -57,6 +64,11 @@ try {
 } catch (err) {
   console.error(`check-dist: cannot read ${dir}: ${err.message}`);
   process.exit(1);
+}
+
+for (const path of dotted) {
+  const rel = relative(dir, path).split("\\").join("/");
+  problems.push(`${rel}: name starts with "."`);
 }
 
 const indexPath = join(dir, "index.html");

@@ -54,8 +54,27 @@ export default defineConfig([
         },
         {
           selector:
+            "AssignmentExpression > MemberExpression.left[computed=true][property.value=/^(innerHTML|outerHTML)$/]",
+          message: renderTextAsText,
+        },
+        {
+          selector:
             "CallExpression > MemberExpression.callee[property.name='insertAdjacentHTML']",
           message: renderTextAsText,
+        },
+        {
+          selector:
+            "CallExpression > MemberExpression.callee[object.name='document'][property.name=/^(write|writeln)$/]",
+          message: renderTextAsText,
+        },
+        {
+          selector: "JSXAttribute[name.name=/^srcdoc$/i]",
+          message: renderTextAsText,
+        },
+        {
+          selector:
+            "CallExpression[callee.property.name='setAttribute'][arguments.0.value=/^style$/i]",
+          message: noInlineStyles,
         },
       ],
     },

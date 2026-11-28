@@ -105,9 +105,10 @@ build-go: .toolchain-ready ## Build the static binary into bin/ops-copilot
 	$(RUN) go build -trimpath -ldflags "-s -w" -o bin/ops-copilot ./cmd/ops-copilot
 
 # Keeps the tracked web/dist/.gitkeep, so go:embed still has a file to match.
+# The test lets clean succeed when web/dist is absent.
 clean: ## Remove build outputs (bin, web/dist/*)
 	rm -rf bin
-	find web/dist -mindepth 1 -maxdepth 1 ! -name .gitkeep -exec rm -rf {} +
+	[ ! -d web/dist ] || find web/dist -mindepth 1 -maxdepth 1 ! -name .gitkeep -exec rm -rf {} +
 
 # Hidden helpers for scripts and checks.
 print-image:

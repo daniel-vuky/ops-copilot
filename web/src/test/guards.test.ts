@@ -116,6 +116,81 @@ describe("check-dist", () => {
       },
       "assets/inter-latin-wght-normal.woff2: asset name has no content hash",
     ],
+    [
+      "an https: URL in CSS url()",
+      (f) => {
+        f["assets/index-Xy_z-987.css"] =
+          "@font-face{font-family:x;src:url(https://cdn.example/x.woff2)}";
+      },
+      "assets/index-Xy_z-987.css: URL to another origin",
+    ],
+    [
+      "a protocol-relative URL in CSS url()",
+      (f) => {
+        f["assets/index-Xy_z-987.css"] =
+          "@font-face{font-family:x;src:url(//cdn.example/x.woff2)}";
+      },
+      "assets/index-Xy_z-987.css: URL to another origin",
+    ],
+    [
+      "a minified @import of another origin",
+      (f) => {
+        f["assets/index-Xy_z-987.css"] =
+          '@import"https://cdn.example/x.css";' + cleanCSS;
+      },
+      "assets/index-Xy_z-987.css: URL to another origin",
+    ],
+    [
+      "a <style> element",
+      (f) => {
+        f["index.html"] = cleanIndex.replace(
+          "</head>",
+          "<style>p{color:red}</style></head>",
+        );
+      },
+      "index.html: <style> element",
+    ],
+    [
+      "a <base> element",
+      (f) => {
+        f["index.html"] = cleanIndex.replace("</head>", '<base href="/"></head>');
+      },
+      "index.html: <base> element",
+    ],
+    [
+      "a <meta http-equiv>",
+      (f) => {
+        f["index.html"] = cleanIndex.replace(
+          "</head>",
+          '<meta http-equiv="refresh" content="0;url=/x"></head>',
+        );
+      },
+      "index.html: <meta http-equiv>",
+    ],
+    [
+      "an inline <script> with only data-src",
+      (f) => {
+        f["index.html"] = cleanIndex.replace(
+          '<div id="root"></div>',
+          '<div id="root"></div><script data-src="x">alert(1)</script>',
+        );
+      },
+      "index.html: inline <script>",
+    ],
+    [
+      "a missing index.html",
+      (f) => {
+        delete f["index.html"];
+      },
+      "index.html: missing",
+    ],
+    [
+      "a dotfile in assets",
+      (f) => {
+        f["assets/.DS_Store"] = "x";
+      },
+      'assets/.DS_Store: name starts with "."',
+    ],
   ];
 
   it.each(broken)("rejects %s", (_name, breakIt, problem) => {
@@ -131,42 +206,64 @@ describe("check-dist", () => {
 describe("ESLint guards", () => {
   const eslint = new ESLint({ cwd: webDir });
 
-  /** Lints a snippet as src/x.tsx and returns the rule ids it reports. */
-  async function ruleIds(code: string): Promise<(string | null)[]> {
+  const asText = "Render text as text (ADR 0002 §6)";
+  const noStyle = "Use a class from app.css; no inline styles (CSP)";
+
+  /** Lints a snippet as src/x.tsx and returns `<ruleId>: <message>` lines. */
+  async function report(code: string): Promise<string[]> {
     const [result] = await eslint.lintText(code, { filePath: "src/x.tsx" });
-    return result.messages.map((m) => m.ruleId);
+    return result.messages.map((m) => `${m.ruleId}: ${m.message}`);
   }
 
-  const forbidden: [string, string][] = [
+  /** Wraps a statement in a function that has an element and a string. */
+  const inFn = (statement: string) =>
+    `export function f(el: HTMLElement, s: string) {\n  ${statement}\n}\n`;
+
+  const forbidden: [string, string, string][] = [
     [
       "dangerouslySetInnerHTML as a JSX attribute",
       "export const A = (s: string) => <div dangerouslySetInnerHTML={{ __html: s }} />;\n",
+      asText,
     ],
     [
       "dangerouslySetInnerHTML in a spread object",
       'export const A = (x: { __html: string }) => <div {...{ "dangerouslySetInnerHTML": x }} />;\n',
+      asText,
     ],
     [
       "a style attribute",
       'export const A = () => <p style={{ color: "red" }}>x</p>;\n',
+      noStyle,
     ],
-    [
-      "an innerHTML assignment",
-      "export function f(el: HTMLElement, s: string) {\n  el.innerHTML = s;\n}\n",
-    ],
+    ["an innerHTML assignment", inFn("el.innerHTML = s;"), asText],
+    ["a computed innerHTML assignment", inFn('el["innerHTML"] = s;'), asText],
+    ["a computed outerHTML assignment", inFn('el["outerHTML"] = s;'), asText],
     [
       "an insertAdjacentHTML call",
-      'export function f(el: HTMLElement, s: string) {\n  el.insertAdjacentHTML("beforeend", s);\n}\n',
+      inFn('el.insertAdjacentHTML("beforeend", s);'),
+      asText,
+    ],
+    ["a setAttribute(\"style\") call", inFn('el.setAttribute("style", s);'), noStyle],
+    ["a document.write call", inFn("document.write(s);"), asText],
+    ["a document.writeln call", inFn("document.writeln(s);"), asText],
+    [
+      "a srcDoc attribute",
+      'export const A = (s: string) => <iframe title="x" srcDoc={s} />;\n',
+      asText,
     ],
   ];
 
-  it.each(forbidden)("reports %s", async (_name, code) => {
-    expect(await ruleIds(code)).toContain("no-restricted-syntax");
+  it.each(forbidden)("reports %s", async (_name, code, message) => {
+    expect(await report(code)).toContain(`no-restricted-syntax: ${message}`);
   });
 
   it("accepts text rendered as text", async () => {
     const code =
       'export const A = ({ s }: { s: string }) => <p className="x">{s}</p>;\n';
-    expect(await ruleIds(code)).toEqual([]);
+    expect(await report(code)).toEqual([]);
+  });
+
+  it("accepts a setAttribute call for another attribute", async () => {
+    expect(await report(inFn('el.setAttribute("title", s);'))).toEqual([]);
   });
 });
