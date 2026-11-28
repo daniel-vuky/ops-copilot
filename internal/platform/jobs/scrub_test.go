@@ -29,6 +29,9 @@ func TestScrubURLs(t *testing.T) {
 		{name: "bad port", in: "x https://h:notaport/p?token=t", want: "x [url removed]"},
 		{name: "no host", in: "open file:///etc/passwd now", want: "open [url removed] now"},
 		{name: "trailing punctuation kept", in: "<https://h.example.test/a>;", want: "<https://h.example.test>;"},
+		// Documented behaviour: a URL ends at the first white space, so a
+		// query split by a space keeps its tail.
+		{name: "url ends at white space", in: "https://h/p?key=k x&token=t", want: "https://h x&token=t"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -76,5 +79,18 @@ func TestCutError(t *testing.T) {
 	}
 	if len(got) != 1023 {
 		t.Errorf("cutError(3-byte runes): len %d, want 1023 (341 whole runes)", len(got))
+	}
+}
+
+func TestCutBytesInvalidUTF8(t *testing.T) {
+	t.Parallel()
+	got := cutBytes(strings.Repeat("\x80", 2000), maxErrorBytes)
+	if got == "" || !utf8.ValidString(got) || len(got) > maxErrorBytes {
+		t.Errorf("cutBytes(2000 invalid bytes) = %q (len %d, valid %v), want non-empty, valid, <= %d",
+			got, len(got), utf8.ValidString(got), maxErrorBytes)
+	}
+	mixed := strings.Repeat("a", 1023) + "\xff" + strings.Repeat("b", 10)
+	if got := cutBytes(mixed, maxErrorBytes); !utf8.ValidString(got) || len(got) > maxErrorBytes {
+		t.Errorf("cutBytes(mixed) len %d valid %v, want valid and <= %d", len(got), utf8.ValidString(got), maxErrorBytes)
 	}
 }

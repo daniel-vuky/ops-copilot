@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"regexp"
 	"slices"
 	"sync"
@@ -97,11 +98,17 @@ func defaultTimings() timings {
 }
 
 // kindState is a registered kind with its dispatcher state. Its kind and
-// retry never change after Register; the dispatcher state the later tasks
-// add (running count, last ensured period) is guarded by Scheduler.mu.
+// retry never change after Register; the dispatcher state (running count,
+// and the last ensured period the later tasks add) is guarded by
+// Scheduler.mu.
 type kindState struct {
 	kind  Kind            // normalised by Register
 	retry []time.Duration // resolved delays, own copy; empty means one attempt
+
+	// running counts the kind's slots taken by this process: claimed jobs
+	// whose finish has not been recorded or given up. Guarded by
+	// Scheduler.mu.
+	running int
 }
 
 // maxAttempts returns the kind's number of attempts: 1 with NoRetry, 3
@@ -164,8 +171,8 @@ func New(st Store, tx store.Transactor, opts Options) *Scheduler {
 // kindName is the pattern of a Kind's Name.
 var kindName = regexp.MustCompile(`^[a-z][a-z0-9_.]{0,63}$`)
 
-// maxUniqueKey is the longest unique key, in bytes (the jobs table's
-// CHECK).
+// maxUniqueKey is the longest unique key, in bytes; stricter than the
+// table's character-count CHECK.
 const maxUniqueKey = 128
 
 // errRegisterAfterRecover is returned by Register once Recover has run.
@@ -232,6 +239,8 @@ func validateKind(k Kind) error {
 		return errors.New("timeout is negative")
 	case k.NoRetry && k.Retry != nil:
 		return errors.New("NoRetry with a non-nil Retry")
+	case k.Retry != nil && len(k.Retry) == 0:
+		return errors.New("empty Retry: use NoRetry for a single attempt")
 	case k.Every < 0:
 		return errors.New("every is negative")
 	case k.Offset < 0:
@@ -265,6 +274,268 @@ func validateKind(k Kind) error {
 		return fmt.Errorf("period key is over %d bytes", maxUniqueKey)
 	case k.MaxWaiting != 0:
 		return errors.New("max waiting on a recurring kind")
+	}
+	return nil
+}
+
+// lastErrRestart is the last error of a job Recover requeued.
+const lastErrRestart = "interrupted by a restart"
+
+// maxRawError is how much of an error text is scrubbed: the text is cut to
+// it before scrubbing and to maxErrorBytes after.
+const maxRawError = 16 << 10
+
+// errRecoverTwice is returned by a second call of Recover.
+var errRecoverTwice = errors.New("jobs: Recover already ran")
+
+// errorText returns text scrubbed and cut, ready to store or log (ADR 0006
+// §7).
+func (s *Scheduler) errorText(text string) string {
+	return cutError(s.scrub(cutBytes(text, maxRawError)))
+}
+
+// enqueueOpts are the options of one Enqueue.
+type enqueueOpts struct {
+	runAfter  *time.Time
+	uniqueKey string
+	err       error
+}
+
+// EnqueueOption sets an option of Enqueue.
+type EnqueueOption func(*enqueueOpts)
+
+// RunAfter makes the job due at t instead of now.
+func RunAfter(t time.Time) EnqueueOption {
+	return func(o *enqueueOpts) { o.runAfter = &t }
+}
+
+// UniqueKey gives the job key k, 1 to 128 bytes: while a queued or running
+// job of the kind has the same key, Enqueue refuses with ErrAlreadyActive.
+// A recurring kind's period jobs carry its PeriodKey, so a manual job with
+// that key never overlaps a period's job (ADR 0006 §5). A key outside 1 to
+// 128 bytes makes Enqueue fail.
+func UniqueKey(k string) EnqueueOption {
+	return func(o *enqueueOpts) {
+		if len(k) < 1 || len(k) > maxUniqueKey {
+			o.err = fmt.Errorf("unique key must be 1 to %d bytes, got %d", maxUniqueKey, len(k))
+			return
+		}
+		o.uniqueKey = k
+	}
+}
+
+// kind returns the registered kind called name, or nil.
+func (s *Scheduler) kind(name string) *kindState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.kinds[name]
+}
+
+// freeSlots returns how many more jobs of k this process may run now. The
+// caller holds s.mu.
+func (s *Scheduler) freeSlots(k *kindState) int {
+	return max(0, k.kind.Concurrency-k.running)
+}
+
+// Enqueue queues a job of kind with payload, due now unless RunAfter says
+// otherwise, and returns its id. A nil payload is stored empty. It also
+// works on a recurring kind (a manual run, no period).
+//
+// Call it inside a store.Transactor Write, with that Write's ctx, so the
+// job is queued in the same transaction as the caller's own rows (ADR 0004
+// §5); outside one it fails with an error matching store.ErrNoWriteTx and
+// queues nothing. It never starts a Write of its own. Its errors leave the
+// caller's transaction usable: ErrUnknownKind, ErrPayloadTooLarge,
+// ErrQueueFull (the kind's MaxWaiting is reached, ADR 0006 §6) and
+// ErrAlreadyActive (UniqueKey in use) insert nothing, and the caller
+// decides what to record.
+func (s *Scheduler) Enqueue(ctx context.Context, kind string, payload []byte, opts ...EnqueueOption) (int64, error) {
+	var o enqueueOpts
+	for _, opt := range opts {
+		opt(&o)
+	}
+	if o.err != nil {
+		return 0, fmt.Errorf("jobs: enqueue %q: %w", kind, o.err)
+	}
+	k := s.kind(kind)
+	if k == nil {
+		return 0, fmt.Errorf("jobs: enqueue %q: %w", kind, ErrUnknownKind)
+	}
+	if len(payload) > MaxPayload {
+		return 0, fmt.Errorf("jobs: enqueue %q: %d bytes: %w", kind, len(payload), ErrPayloadTooLarge)
+	}
+
+	if k.kind.MaxWaiting > 0 {
+		// The caller's Write holds the writer, so no claim can change the
+		// count until it commits; s.mu is taken only after the store call
+		// (lock order: writer, then s.mu).
+		queued, err := s.st.CountQueued(ctx, kind)
+		if err != nil {
+			return 0, fmt.Errorf("jobs: enqueue %q: %w", kind, err)
+		}
+		s.mu.Lock()
+		free := s.freeSlots(k)
+		s.mu.Unlock()
+		if max(0, queued-free) >= k.kind.MaxWaiting {
+			return 0, fmt.Errorf("jobs: enqueue %q: %d waiting: %w", kind, queued-free, ErrQueueFull)
+		}
+	}
+
+	now := s.clock.Now()
+	runAfter := now
+	if o.runAfter != nil {
+		runAfter = *o.runAfter
+	}
+	id, inserted, err := s.st.Insert(ctx, NewJob{
+		Kind:      kind,
+		Payload:   payload,
+		RunAfter:  runAfter,
+		UniqueKey: o.uniqueKey,
+		Now:       now,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("jobs: enqueue %q: %w", kind, err)
+	}
+	if !inserted {
+		return 0, fmt.Errorf("jobs: enqueue %q with key %q: %w", kind, o.uniqueKey, ErrAlreadyActive)
+	}
+	s.wake()
+	return id, nil
+}
+
+// wake nudges the dispatcher without blocking. The nudge may arrive before
+// the caller's Write commits; the next poll then picks the job up.
+func (s *Scheduler) wake() {
+	select {
+	case s.nudge <- struct{}{}:
+	default:
+	}
+}
+
+// Cancel cancels job id of kind while it is queued: the job becomes
+// cancelled and the kind's OnFailed runs with ReasonCancelled in the same
+// transaction (ADR 0006 §3).
+//
+// Call it inside a store.Transactor Write, with that Write's ctx; it never
+// starts a Write of its own. It returns ErrUnknownKind for an unregistered
+// kind and an error matching ErrNotCancellable when the job is missing, of
+// another kind, or not queued; neither writes anything, so the caller's
+// transaction stays usable. A running job is stopped with Stop after the
+// caller's Write commits. Any other error, including the hook's, must be
+// returned from the caller's Write fn, so the transaction rolls back.
+func (s *Scheduler) Cancel(ctx context.Context, kind string, id int64) error {
+	k := s.kind(kind)
+	if k == nil {
+		return fmt.Errorf("jobs: cancel %q job %d: %w", kind, id, ErrUnknownKind)
+	}
+	row, found, err := s.st.Get(ctx, id)
+	if err != nil {
+		return fmt.Errorf("jobs: cancel %q job %d: %w", kind, id, err)
+	}
+	if !found || row.Kind != kind {
+		return fmt.Errorf("jobs: cancel %q job %d: no such job: %w", kind, id, ErrNotCancellable)
+	}
+	if row.State != StateQueued {
+		return fmt.Errorf("jobs: cancel %q job %d: job is %s: %w", kind, id, row.State, ErrNotCancellable)
+	}
+
+	changed, err := s.st.MarkFinal(ctx, id, StateQueued, StateCancelled, nil, s.clock.Now())
+	if err != nil {
+		return fmt.Errorf("jobs: cancel %q job %d: %w", kind, id, err)
+	}
+	if !changed {
+		return fmt.Errorf("jobs: cancel %q job %d: job is no longer queued: %w", kind, id, ErrNotCancellable)
+	}
+	if err := s.runHook(ctx, k, row, ReasonCancelled, row.LastError); err != nil {
+		return fmt.Errorf("jobs: cancel %q job %d: failure hook: %w", kind, id, err)
+	}
+
+	s.mu.Lock()
+	delete(s.hookBackoff, id)
+	s.mu.Unlock()
+	return nil
+}
+
+// jobOf returns the Job a handler or hook of k sees for row.
+func jobOf(k *kindState, row Row) Job {
+	return Job{
+		ID:          row.ID,
+		Kind:        row.Kind,
+		Payload:     row.Payload,
+		Attempt:     row.Attempts,
+		MaxAttempts: k.maxAttempts(),
+		PeriodAt:    row.PeriodAt,
+		UniqueKey:   row.UniqueKey,
+	}
+}
+
+// runHook runs k's OnFailed, if any, for row with ctx, the ctx of the
+// Write that marks the job failed or cancelled. A panic is recovered as
+// the error "hook panic: <value>". The returned error's text is scrubbed
+// and cut, and it wraps nothing, so the hook's raw text never escapes.
+func (s *Scheduler) runHook(ctx context.Context, k *kindState, row Row, reason Reason, lastErr string) (err error) {
+	if k.kind.OnFailed == nil {
+		return nil
+	}
+	defer func() {
+		if v := recover(); v != nil {
+			err = errors.New(s.errorText(fmt.Sprintf("hook panic: %v", v)))
+		}
+	}()
+	if herr := k.kind.OnFailed(ctx, jobOf(k, row), reason, lastErr); herr != nil {
+		return errors.New(s.errorText(herr.Error()))
+	}
+	return nil
+}
+
+// Recover is the startup requeue (ADR 0001 §6, ADR 0006 §2). Call it once
+// at start, after every Register and before Run and the HTTP listener.
+//
+// In one Write it puts every running job back in the queue, due now, with
+// the last error "interrupted by a restart" and its attempts kept. It logs
+// "jobs requeued" when it requeued any, and warns once about queued jobs
+// of kinds that are not registered, which would otherwise stay queued
+// silently. After it, Register fails. An error should fail the start.
+func (s *Scheduler) Recover(ctx context.Context) error {
+	s.mu.Lock()
+	done := s.recovered
+	s.mu.Unlock()
+	if done {
+		return errRecoverTwice
+	}
+
+	now := s.clock.Now()
+	var requeued int64
+	err := s.tx.Write(ctx, func(ctx context.Context) error {
+		var err error
+		requeued, err = s.st.RequeueRunning(ctx, nil, lastErrRestart, now)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("jobs: recover: %w", err)
+	}
+	if requeued > 0 {
+		s.log.InfoContext(ctx, "jobs requeued", "count", requeued)
+	}
+
+	// Read after the Write committed: the readers see the requeued rows.
+	queued, err := s.st.QueuedByKind(ctx)
+	if err != nil {
+		return fmt.Errorf("jobs: recover: %w", err)
+	}
+
+	s.mu.Lock()
+	var unknown []any
+	for _, kind := range slices.Sorted(maps.Keys(queued)) {
+		if _, ok := s.kinds[kind]; !ok {
+			unknown = append(unknown, slog.Int(kind, queued[kind]))
+		}
+	}
+	s.recovered = true
+	s.mu.Unlock()
+
+	if len(unknown) > 0 {
+		s.log.WarnContext(ctx, "queued jobs of unregistered kinds", slog.Group("kinds", unknown...))
 	}
 	return nil
 }

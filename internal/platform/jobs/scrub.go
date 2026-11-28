@@ -23,10 +23,12 @@ const urlTrailing = `"'),.;:]>`
 // scheme and a host.
 const urlRemoved = "[url removed]"
 
-// ScrubURLs rewrites every URL-shaped substring of s to scheme://host
-// (the host keeps its port), dropping user info, path, query and fragment,
-// since Go's HTTP errors quote the full request URL and a webhook URL
-// carries its key and token (ADR 0006 §7). A substring that does not parse
+// ScrubURLs rewrites every URL-shaped substring of s, a scheme:// token up
+// to the first white space, to scheme://host (the host keeps its port),
+// dropping user info, path, query and fragment, since Go's HTTP errors
+// quote the full request URL and a webhook URL carries its key and token
+// (ADR 0006 §7). Text after a white space is not part of the URL, so a
+// query split by a space keeps its tail. A substring that does not parse
 // to a scheme and a host becomes "[url removed]". Text without a URL is
 // returned unchanged. It is the default Options.Scrub.
 func ScrubURLs(s string) string {
@@ -50,14 +52,16 @@ func cutError(s string) string {
 	return cutBytes(s, maxErrorBytes)
 }
 
-// cutBytes cuts s to at most n bytes, moving back to the start of a rune
-// so a multi-byte sequence is never split.
+// cutBytes cuts s to at most n bytes of valid UTF-8: invalid bytes become
+// U+FFFD first, then the cut moves back to the start of a rune so a
+// multi-byte sequence is never split.
 func cutBytes(s string, n int) string {
+	s = strings.ToValidUTF8(s, "\uFFFD")
 	if len(s) <= n {
 		return s
 	}
 	i := n
-	for i > 0 && !utf8.RuneStart(s[i]) {
+	for back := 0; back < utf8.UTFMax-1 && i > 0 && !utf8.RuneStart(s[i]); back++ {
 		i--
 	}
 	return s[:i]

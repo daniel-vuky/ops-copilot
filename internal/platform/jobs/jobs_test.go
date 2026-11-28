@@ -49,46 +49,57 @@ func TestRegisterAcceptsValidKinds(t *testing.T) {
 func TestRegisterRejects(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name   string
-		mutate func(k *Kind)
-		setup  func(s *Scheduler)
+		name    string
+		mutate  func(k *Kind)
+		setup   func(t *testing.T, s *Scheduler)
+		wantErr string
 	}{
-		{name: "empty name", mutate: func(k *Kind) { k.Name = "" }},
-		{name: "upper case name", mutate: func(k *Kind) { k.Name = "Bad" }},
-		{name: "leading digit", mutate: func(k *Kind) { k.Name = "1abc" }},
-		{name: "65-char name", mutate: func(k *Kind) { k.Name = "a" + strings.Repeat("b", 64) }},
-		{name: "duplicate", setup: func(s *Scheduler) { _ = s.Register(baseKind()) }},
-		{name: "nil handler", mutate: func(k *Kind) { k.Handler = nil }},
-		{name: "negative concurrency", mutate: func(k *Kind) { k.Concurrency = -1 }},
-		{name: "negative max waiting", mutate: func(k *Kind) { k.MaxWaiting = -1 }},
-		{name: "negative timeout", mutate: func(k *Kind) { k.Timeout = -time.Second }},
-		{name: "negative retry delay", mutate: func(k *Kind) { k.Retry = []time.Duration{time.Second, -time.Second} }},
-		{name: "NoRetry with Retry", mutate: func(k *Kind) { k.NoRetry = true; k.Retry = []time.Duration{} }},
-		{name: "negative every", mutate: func(k *Kind) { k.Every = -time.Hour }},
-		{name: "every 59 s", mutate: func(k *Kind) { k.Every = 59 * time.Second }},
-		{name: "every not whole seconds", mutate: func(k *Kind) { k.Every = 90*time.Second + 500*time.Millisecond }},
-		{name: "offset equals every", mutate: func(k *Kind) { k.Every = time.Hour; k.Offset = time.Hour }},
-		{name: "offset negative", mutate: func(k *Kind) { k.Every = time.Hour; k.Offset = -time.Second }},
-		{name: "offset not whole seconds", mutate: func(k *Kind) { k.Every = time.Hour; k.Offset = 1500 * time.Millisecond }},
-		{name: "offset on non-recurring", mutate: func(k *Kind) { k.Offset = time.Second }},
-		{name: "period key on non-recurring", mutate: func(k *Kind) { k.PeriodKey = "all" }},
-		{name: "period key too long", mutate: func(k *Kind) { k.Every = time.Hour; k.PeriodKey = strings.Repeat("k", 129) }},
-		{name: "max waiting on recurring", mutate: func(k *Kind) { k.Every = time.Hour; k.MaxWaiting = 5 }},
-		{name: "after recover", setup: func(s *Scheduler) { s.recovered = true }},
+		{name: "empty name", mutate: func(k *Kind) { k.Name = "" }, wantErr: "name must match"},
+		{name: "upper case name", mutate: func(k *Kind) { k.Name = "Bad" }, wantErr: "name must match"},
+		{name: "leading digit", mutate: func(k *Kind) { k.Name = "1abc" }, wantErr: "name must match"},
+		{name: "65-char name", mutate: func(k *Kind) { k.Name = "a" + strings.Repeat("b", 64) }, wantErr: "name must match"},
+		{name: "duplicate", setup: func(t *testing.T, s *Scheduler) {
+			t.Helper()
+			if err := s.Register(baseKind()); err != nil {
+				t.Fatalf("first Register: %v", err)
+			}
+		}, wantErr: "already registered"},
+		{name: "nil handler", mutate: func(k *Kind) { k.Handler = nil }, wantErr: "handler is nil"},
+		{name: "negative concurrency", mutate: func(k *Kind) { k.Concurrency = -1 }, wantErr: "concurrency is negative"},
+		{name: "negative max waiting", mutate: func(k *Kind) { k.MaxWaiting = -1 }, wantErr: "max waiting is negative"},
+		{name: "negative timeout", mutate: func(k *Kind) { k.Timeout = -time.Second }, wantErr: "timeout is negative"},
+		{name: "negative retry delay", mutate: func(k *Kind) { k.Retry = []time.Duration{time.Second, -time.Second} }, wantErr: "retry delay 2 is negative"},
+		{name: "NoRetry with Retry", mutate: func(k *Kind) { k.NoRetry = true; k.Retry = []time.Duration{} }, wantErr: "NoRetry with a non-nil Retry"},
+		{name: "empty Retry", mutate: func(k *Kind) { k.Retry = []time.Duration{} }, wantErr: "use NoRetry"},
+		{name: "negative every", mutate: func(k *Kind) { k.Every = -time.Hour }, wantErr: "every is negative"},
+		{name: "every 59 s", mutate: func(k *Kind) { k.Every = 59 * time.Second }, wantErr: "every is under"},
+		{name: "every not whole seconds", mutate: func(k *Kind) { k.Every = 90*time.Second + 500*time.Millisecond }, wantErr: "every is not whole seconds"},
+		{name: "offset equals every", mutate: func(k *Kind) { k.Every = time.Hour; k.Offset = time.Hour }, wantErr: "offset is not under every"},
+		{name: "offset negative", mutate: func(k *Kind) { k.Every = time.Hour; k.Offset = -time.Second }, wantErr: "offset is negative"},
+		{name: "offset not whole seconds", mutate: func(k *Kind) { k.Every = time.Hour; k.Offset = 1500 * time.Millisecond }, wantErr: "offset is not whole seconds"},
+		{name: "offset on non-recurring", mutate: func(k *Kind) { k.Offset = time.Second }, wantErr: "offset on a non-recurring kind"},
+		{name: "period key on non-recurring", mutate: func(k *Kind) { k.PeriodKey = "all" }, wantErr: "period key on a non-recurring kind"},
+		{name: "period key too long", mutate: func(k *Kind) { k.Every = time.Hour; k.PeriodKey = strings.Repeat("k", 129) }, wantErr: "period key is over 128 bytes"},
+		{name: "max waiting on recurring", mutate: func(k *Kind) { k.Every = time.Hour; k.MaxWaiting = 5 }, wantErr: "max waiting on a recurring kind"},
+		{name: "after recover", setup: func(_ *testing.T, s *Scheduler) { s.recovered = true }, wantErr: "after Recover"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			s := newTestScheduler()
 			if tt.setup != nil {
-				tt.setup(s)
+				tt.setup(t, s)
 			}
 			k := baseKind()
 			if tt.mutate != nil {
 				tt.mutate(&k)
 			}
-			if err := s.Register(k); err == nil {
+			err := s.Register(k)
+			if err == nil {
 				t.Fatalf("Register(%+v) = nil, want an error", k)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("Register(%+v) = %q, want it to contain %q", k, err, tt.wantErr)
 			}
 		})
 	}
