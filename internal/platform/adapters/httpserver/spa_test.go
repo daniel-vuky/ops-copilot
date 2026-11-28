@@ -19,14 +19,15 @@ const (
 )
 
 // testSPAFS is the built SPA the tests serve: index.html, hashed assets, a
-// root public file and a dot file that must never be served.
+// root public file and dot files that must never be served.
 func testSPAFS() fstest.MapFS {
 	return fstest.MapFS{
 		"index.html":             {Data: []byte(indexData)},
 		"assets/index-AbC123.js": {Data: []byte(assetData)},
 		"assets/inter-latin-wght-normal-Xy9.woff2": {Data: []byte(fontData)},
-		"favicon.svg": {Data: []byte(faviconData)},
-		".hidden":     {Data: []byte(hiddenData)},
+		"favicon.svg":       {Data: []byte(faviconData)},
+		".hidden":           {Data: []byte(hiddenData)},
+		"assets/.hidden.js": {Data: []byte(hiddenData)},
 	}
 }
 
@@ -39,7 +40,7 @@ func TestSPADeepLinksServeIndex(t *testing.T) {
 	t.Parallel()
 
 	r := newSPARouter()
-	for _, target := range []string{"/", "/index.html", "/investigations/1", "/knowledge/documents/x", "/cve/findings/9", "/mcp/x", "/assets"} {
+	for _, target := range []string{"/", "/index.html", "/favicon.svg/", "/investigations/1", "/knowledge/documents/x", "/cve/findings/9", "/mcp/x", "/assets"} {
 		t.Run(target, func(t *testing.T) {
 			t.Parallel()
 
@@ -95,7 +96,7 @@ func TestSPAMissingAssetIs404NoStore(t *testing.T) {
 	t.Parallel()
 
 	r := newSPARouter()
-	for _, target := range []string{"/assets/gone-1.js", "/assets/", "/assets/..%2ffavicon.svg", "/assets/..%2findex.html"} {
+	for _, target := range []string{"/assets/gone-1.js", "/assets/", "/assets/..%2ffavicon.svg", "/assets/..%2findex.html", "/assets/.hidden.js", "/assets/index-AbC123.js/"} {
 		t.Run(target, func(t *testing.T) {
 			t.Parallel()
 
@@ -109,7 +110,7 @@ func TestSPAMissingAssetIs404NoStore(t *testing.T) {
 			if got := rec.Header().Get("Cache-Control"); got != noStore {
 				t.Errorf("Cache-Control = %q, want %q", got, noStore)
 			}
-			if got := body(t, rec); got == faviconData || got == indexData {
+			if got := body(t, rec); got == faviconData || got == indexData || got == hiddenData || got == assetData {
 				t.Errorf("body = %q, want no file contents", got)
 			}
 		})
@@ -184,8 +185,45 @@ func TestSPARangeNotSatisfiable(t *testing.T) {
 	if rec.Code != http.StatusRequestedRangeNotSatisfiable {
 		t.Fatalf("status = %d, want 416", rec.Code)
 	}
-	if got := rec.Header().Get("Content-Security-Policy"); got != contentSecurityPolicy {
+	h := rec.Header()
+	if got := h.Get("Content-Security-Policy"); got != contentSecurityPolicy {
 		t.Errorf("Content-Security-Policy = %q, want %q", got, contentSecurityPolicy)
+	}
+	if got := h.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+	if got := h.Get("Referrer-Policy"); got != "same-origin" {
+		t.Errorf("Referrer-Policy = %q, want same-origin", got)
+	}
+}
+
+func TestSPAMissingIndexIs500(t *testing.T) {
+	t.Parallel()
+
+	fsys := fstest.MapFS{"assets/index-AbC123.js": {Data: []byte(assetData)}}
+	r, buf := newTestRouter(t, true, SPAHandler(fsys))
+	rec := serve(r, http.MethodGet, "/investigations/1", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	h := rec.Header()
+	if got := h.Get("Cache-Control"); got != noStore {
+		t.Errorf("Cache-Control = %q, want %q", got, noStore)
+	}
+	if got := h.Get("Content-Security-Policy"); got != contentSecurityPolicy {
+		t.Errorf("Content-Security-Policy = %q, want %q", got, contentSecurityPolicy)
+	}
+	var logged bool
+	for _, l := range logLines(t, buf) {
+		if l["msg"] == "serve SPA index" {
+			logged = true
+			if e, _ := l["error"].(string); !strings.Contains(e, "index.html") {
+				t.Errorf("error attr = %q, want the cause naming index.html", e)
+			}
+		}
+	}
+	if !logged {
+		t.Error("no \"serve SPA index\" log line")
 	}
 }
 

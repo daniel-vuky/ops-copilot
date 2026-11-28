@@ -1,6 +1,8 @@
 package httpserver
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -54,12 +56,14 @@ var contentTypes = map[string]string{
 // the built-in placeholder page instead.
 //
 //   - /assets/<file> serves the file with a one-year immutable Cache-Control,
-//     or a text 404 with no-store when it is missing or the cleaned path leaves
-//     /assets/. /assets/ itself is a 404; /assets is the app.
+//     or a text 404 with no-store when it is missing, a segment starts with
+//     ".", the path ends in "/" or the cleaned path leaves /assets/.
+//     /assets/ itself is a 404; /assets is the app.
 //   - A path whose first segment starts with "." is a text 404 with no-store:
 //     never the file, never the app.
 //   - /<file> naming a regular file at the root of fsys (other than
-//     index.html) serves it with a one-hour Cache-Control.
+//     index.html) serves it with a one-hour Cache-Control. With a trailing
+//     slash (/<file>/) it is the app, never the file.
 //   - Every other path serves index.html with no-store, so client-side routes
 //     work as deep links.
 //
@@ -77,8 +81,9 @@ func SPAHandler(fsys fs.FS) http.Handler {
 			p := cleanPath(r.URL.Path)
 			// An escaped slash such as /assets/..%2ffavicon.svg reaches
 			// here unclean; refuse anything that cleans to outside assets/.
-			if !strings.HasPrefix(p, spaAssetsPrefix) || hasDotSegment(p) ||
-				!serveFile(w, r, fsys, strings.TrimPrefix(p, "/"), cacheImmutable) {
+			// A trailing slash would alias the file under a second URL.
+			if !strings.HasPrefix(p, spaAssetsPrefix) || hasDotSegment(p) || strings.HasSuffix(r.URL.Path, "/") ||
+				serveFile(w, r, fsys, strings.TrimPrefix(p, "/"), cacheImmutable) != nil {
 				spaNotFound(w)
 			}
 			return
@@ -90,13 +95,15 @@ func SPAHandler(fsys fs.FS) http.Handler {
 			spaNotFound(w)
 			return
 		}
-		if !nested && name != "" && name != spaIndex && serveFile(w, r, fsys, name, cachePublicFile) {
+		rootFile := !nested && name != "" && name != spaIndex && !strings.HasSuffix(r.URL.Path, "/")
+		if rootFile && serveFile(w, r, fsys, name, cachePublicFile) == nil {
 			return
 		}
-		if !serveFile(w, r, fsys, spaIndex, cacheNoStore) {
+		if err := serveFile(w, r, fsys, spaIndex, cacheNoStore); err != nil {
 			// web.App guarantees index.html; reaching here is a build bug.
 			logging.FromContext(r.Context()).LogAttrs(r.Context(), slog.LevelError, "serve SPA index",
 				slog.String("file", spaIndex),
+				slog.Any("error", err),
 			)
 			w.Header().Set("Cache-Control", cacheNoStore)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -104,24 +111,32 @@ func SPAHandler(fsys fs.FS) http.Handler {
 	})
 }
 
+// errNotServable reports a path that exists in the SPA build but is not a
+// regular, seekable file.
+var errNotServable = errors.New("not a regular seekable file")
+
 // serveFile serves the regular file name from fsys with the given
-// Cache-Control, honouring HEAD and Range. It reports false, having written
-// nothing, when name is not a regular file that can be opened and seeked.
-func serveFile(w http.ResponseWriter, r *http.Request, fsys fs.FS, name, cacheControl string) bool {
+// Cache-Control, honouring HEAD and Range, and returns nil. When name is not a
+// regular file that can be opened and seeked it returns why, having written
+// nothing.
+func serveFile(w http.ResponseWriter, r *http.Request, fsys fs.FS, name, cacheControl string) error {
 	info, err := fs.Stat(fsys, name)
-	if err != nil || !info.Mode().IsRegular() {
-		return false
+	if err != nil {
+		return fmt.Errorf("stat SPA file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("SPA file %s: %w", name, errNotServable)
 	}
 	f, err := fsys.Open(name)
 	if err != nil {
-		return false
+		return fmt.Errorf("open SPA file: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 	rs, ok := f.(io.ReadSeeker)
 	if !ok {
 		// embed.FS and fstest.MapFS files are seekable; anything else is
 		// treated as missing rather than read into memory.
-		return false
+		return fmt.Errorf("SPA file %s: %w", name, errNotServable)
 	}
 
 	ct, ok := contentTypes[path.Ext(name)]
@@ -134,7 +149,7 @@ func serveFile(w http.ResponseWriter, r *http.Request, fsys fs.FS, name, cacheCo
 	// A zero modification time sends no Last-Modified: embedded files have
 	// none worth sending, and hashed names make revalidation unnecessary.
 	http.ServeContent(w, r, name, time.Time{}, rs)
-	return true
+	return nil
 }
 
 // spaNotFound answers a text 404 that caches must not keep.

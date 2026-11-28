@@ -243,19 +243,21 @@ func TestSecurityHeadersOnEveryResponse(t *testing.T) {
 		name, method, target string
 		router               *Router
 		wantStatus           int
+		wantTypePrefix       string // Content-Type prefix, when not empty
 	}{
-		{"placeholder UI", http.MethodGet, "/", r, http.StatusOK},
-		{"healthz", http.MethodGet, "/healthz", r, http.StatusOK},
-		{"healthz not ready", http.MethodGet, "/healthz", notReady, http.StatusServiceUnavailable},
-		{"JSON 404", http.MethodGet, "/api/x", r, http.StatusNotFound},
-		{"mcp JSON 404", http.MethodGet, "/mcp", r, http.StatusNotFound},
-		{"UI 405", http.MethodPost, "/", r, http.StatusMethodNotAllowed},
-		{"recovered panic", http.MethodGet, "/api/panic", r, http.StatusInternalServerError},
-		{"recovered UI panic", http.MethodGet, "/ui-panic", r, http.StatusInternalServerError},
-		{"clean-path redirect", http.MethodGet, "/a/../b", r, http.StatusTemporaryRedirect},
-		{"SPA deep link", http.MethodGet, "/investigations/1", spa, http.StatusOK},
-		{"SPA asset", http.MethodGet, "/assets/index-AbC123.js", spa, http.StatusOK},
-		{"SPA missing asset", http.MethodGet, "/assets/gone-1.js", spa, http.StatusNotFound},
+		{"placeholder UI", http.MethodGet, "/", r, http.StatusOK, ""},
+		{"healthz", http.MethodGet, "/healthz", r, http.StatusOK, ""},
+		{"healthz not ready", http.MethodGet, "/healthz", notReady, http.StatusServiceUnavailable, ""},
+		{"JSON 404", http.MethodGet, "/api/x", r, http.StatusNotFound, ""},
+		{"mcp JSON 404", http.MethodGet, "/mcp", r, http.StatusNotFound, ""},
+		{"UI 405", http.MethodPost, "/", r, http.StatusMethodNotAllowed, ""},
+		{"recovered panic", http.MethodGet, "/api/panic", r, http.StatusInternalServerError, ""},
+		{"recovered UI panic", http.MethodGet, "/ui-panic", r, http.StatusInternalServerError, "text/plain"},
+		{"clean-path redirect", http.MethodGet, "/a/../b", r, http.StatusTemporaryRedirect, ""},
+		{"SPA deep link", http.MethodGet, "/investigations/1", spa, http.StatusOK, ""},
+		{"SPA asset", http.MethodGet, "/assets/index-AbC123.js", spa, http.StatusOK, ""},
+		{"SPA missing asset", http.MethodGet, "/assets/gone-1.js", spa, http.StatusNotFound, ""},
+		{"SPA assets dir", http.MethodGet, "/assets/", spa, http.StatusNotFound, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -266,6 +268,9 @@ func TestSecurityHeadersOnEveryResponse(t *testing.T) {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
 			}
 			h := rec.Header()
+			if tt.wantTypePrefix != "" && !strings.HasPrefix(h.Get("Content-Type"), tt.wantTypePrefix) {
+				t.Errorf("Content-Type = %q, want prefix %q", h.Get("Content-Type"), tt.wantTypePrefix)
+			}
 			if got := h.Get("Content-Security-Policy"); got != contentSecurityPolicy {
 				t.Errorf("Content-Security-Policy = %q, want %q", got, contentSecurityPolicy)
 			}
