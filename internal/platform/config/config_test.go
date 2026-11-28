@@ -69,6 +69,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.LogLevel != slog.LevelInfo {
 		t.Errorf("LogLevel = %v, want %v", cfg.LogLevel, slog.LevelInfo)
 	}
+	if cfg.DataDir != "/data" {
+		t.Errorf("DataDir = %q, want /data", cfg.DataDir)
+	}
 }
 
 func TestLoadPublicURLAccepted(t *testing.T) {
@@ -284,6 +287,48 @@ func TestLoadLogLevel(t *testing.T) {
 	}
 }
 
+func TestLoadDataDir(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		in   string
+		ok   bool
+		want string
+	}{
+		{"/data", true, "/data"},
+		{"/data/", true, "/data"},
+		{"/var/lib/ops copilot/", true, "/var/lib/ops copilot"},
+		{"/srv//ops/../data", true, "/srv/data"},
+		{"data", false, ""},
+		{"./data", false, ""},
+		{"../data", false, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := config.Load(env(withURL(map[string]string{"DATA_DIR": tt.in})))
+			if !tt.ok {
+				if varError(err, "DATA_DIR") == nil {
+					t.Fatalf("Load: want a DATA_DIR *VarError, got %v", err)
+				}
+				if want := "DATA_DIR: must be an absolute path"; err.Error() != want {
+					t.Errorf("error = %q, want the fixed phrase %q", err, want)
+				}
+				if strings.Contains(err.Error(), tt.in) {
+					t.Errorf("error %q echoes raw value %q", err, tt.in)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: unexpected error: %v", err)
+			}
+			if cfg.DataDir != tt.want {
+				t.Errorf("DataDir = %q, want %q", cfg.DataDir, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadJoinsAllErrorsInOrder(t *testing.T) {
 	t.Parallel()
 
@@ -298,14 +343,15 @@ func TestLoadJoinsAllErrorsInOrder(t *testing.T) {
 			prefixes: []string{"PUBLIC_URL: ", "DISPLAY_TZ: ", "LOG_LEVEL: "},
 		},
 		{
-			name: "all four bad",
+			name: "all five bad",
 			env: map[string]string{
 				"PUBLIC_URL":  "http://ops.example.test",
 				"DISPLAY_TZ":  "Nope/Zone",
 				"LISTEN_ADDR": "nowhere",
 				"LOG_LEVEL":   "loud",
+				"DATA_DIR":    "relative/dir",
 			},
-			prefixes: []string{"PUBLIC_URL: ", "DISPLAY_TZ: ", "LISTEN_ADDR: ", "LOG_LEVEL: "},
+			prefixes: []string{"PUBLIC_URL: ", "DISPLAY_TZ: ", "LISTEN_ADDR: ", "LOG_LEVEL: ", "DATA_DIR: "},
 		},
 	}
 	for _, tt := range tests {
@@ -345,7 +391,7 @@ func TestVarErrorMessage(t *testing.T) {
 func TestLogAttrs(t *testing.T) {
 	t.Parallel()
 
-	cfg, err := config.Load(env(map[string]string{"PUBLIC_URL": validURL, "LOG_LEVEL": "warn"}))
+	cfg, err := config.Load(env(map[string]string{"PUBLIC_URL": validURL, "LOG_LEVEL": "warn", "DATA_DIR": "/srv/ops/"}))
 	if err != nil {
 		t.Fatalf("Load: unexpected error: %v", err)
 	}
@@ -355,7 +401,7 @@ func TestLogAttrs(t *testing.T) {
 		keys = append(keys, a.Key)
 		got[a.Key] = a.Value.String()
 	}
-	if want := []string{"public_url", "display_tz", "listen_addr", "log_level"}; strings.Join(keys, ",") != strings.Join(want, ",") {
+	if want := []string{"public_url", "display_tz", "listen_addr", "log_level", "data_dir"}; strings.Join(keys, ",") != strings.Join(want, ",") {
 		t.Errorf("keys = %v, want %v", keys, want)
 	}
 	want := map[string]string{
@@ -363,6 +409,7 @@ func TestLogAttrs(t *testing.T) {
 		"display_tz":  "Asia/Ho_Chi_Minh",
 		"listen_addr": ":8080",
 		"log_level":   "WARN",
+		"data_dir":    "/srv/ops",
 	}
 	for k, v := range want {
 		if got[k] != v {
