@@ -20,6 +20,7 @@ import (
 	_ "modernc.org/sqlite" // registers the "sqlite" driver for fixtures
 
 	"github.com/daniel-vuky/ops-copilot/internal/platform/adapters/sqlite"
+	"github.com/daniel-vuky/ops-copilot/internal/platform/jobs"
 )
 
 // waitTimeout bounds every wait in these tests.
@@ -81,6 +82,17 @@ func findLine(lines []map[string]any, msg string) (map[string]any, bool) {
 		}
 	}
 	return nil, false
+}
+
+// lineIndex returns the index of the first log line whose msg is msg, or
+// -1.
+func lineIndex(lines []map[string]any, msg string) int {
+	for i, l := range lines {
+		if l["msg"] == msg {
+			return i
+		}
+	}
+	return -1
 }
 
 // serveUntilHealthy runs the program with env until /healthz on its
@@ -302,6 +314,11 @@ func TestRunCreatesDatabase(t *testing.T) {
 	if _, ok := findLine(lines, "store close failed"); ok {
 		t.Errorf("unexpected %q line in stdout: %q", "store close failed", stdout.String())
 	}
+	for _, l := range lines {
+		if l["level"] == "ERROR" {
+			t.Errorf("unexpected ERROR log line: %v", l)
+		}
+	}
 	// A clean close checkpoints and removes the WAL file.
 	wal := dbPath + "-wal"
 	if _, err := os.Stat(wal); !errors.Is(err, fs.ErrNotExist) {
@@ -352,5 +369,220 @@ func TestRunRefusesNewerSchema(t *testing.T) {
 	}
 	if _, ok := findLine(lines, "listening"); ok {
 		t.Errorf("unexpected %q line: run must not listen when the store fails to open", "listening")
+	}
+}
+
+func TestRunRequeuesJobsAtStart(t *testing.T) {
+	keepDefaultLogger(t)
+	dataDir := t.TempDir()
+
+	// Leave a job of kind "x" running, as a crash would.
+	ctx := context.Background()
+	db, err := sqlite.Open(ctx, sqlite.Options{Dir: dataDir})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	st := sqlite.NewJobStore(db)
+	now := time.Now()
+	err = db.Write(ctx, func(ctx context.Context) error {
+		id, inserted, err := st.Insert(ctx, jobs.NewJob{Kind: "x", RunAfter: now, Now: now})
+		if err != nil {
+			return err
+		}
+		if !inserted {
+			return errors.New("job not inserted")
+		}
+		changed, err := st.MarkRunning(ctx, id, now)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return errors.New("job not marked running")
+		}
+		return nil
+	})
+	if err != nil {
+		_ = db.Close()
+		t.Fatalf("seed running job: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	env := envOf(map[string]string{
+		"PUBLIC_URL":  "https://ops.example.test",
+		"LISTEN_ADDR": freeAddr(t),
+		"DATA_DIR":    dataDir,
+	})
+	code, stdout, stderr := serveUntilHealthy(t, env)
+	if code != 0 {
+		t.Errorf("run() = %d, want 0 (stderr %q)", code, stderr.String())
+	}
+
+	lines := jsonLines(t, stdout)
+	l, ok := findLine(lines, "jobs requeued")
+	if !ok {
+		t.Fatalf("no %q line in stdout: %q", "jobs requeued", stdout.String())
+	}
+	if l["count"] != float64(1) {
+		t.Errorf("jobs requeued count = %v, want 1", l["count"])
+	}
+	requeuedAt, listeningAt := lineIndex(lines, "jobs requeued"), lineIndex(lines, "listening")
+	if listeningAt < 0 || requeuedAt > listeningAt {
+		t.Errorf("jobs requeued at line %d, listening at line %d: want the requeue before listening", requeuedAt, listeningAt)
+	}
+	w, ok := findLine(lines, "queued jobs of unregistered kinds")
+	if !ok {
+		t.Fatalf("no %q line in stdout: %q", "queued jobs of unregistered kinds", stdout.String())
+	}
+	if w["level"] != "WARN" {
+		t.Errorf("unregistered kinds level = %v, want WARN", w["level"])
+	}
+	kinds, _ := w["kinds"].(map[string]any)
+	if kinds["x"] != float64(1) {
+		t.Errorf("unregistered kinds = %v, want x: 1", w["kinds"])
+	}
+}
+
+func TestRunJobRecoveryFailure(t *testing.T) {
+	keepDefaultLogger(t)
+	dataDir := t.TempDir()
+
+	// A migrated store whose jobs table is gone: Recover's requeue fails.
+	db, err := sqlite.Open(context.Background(), sqlite.Options{Dir: dataDir})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+	fixture, err := sql.Open("sqlite", filepath.Join(dataDir, sqlite.FileName))
+	if err != nil {
+		t.Fatalf("open fixture: %v", err)
+	}
+	if _, err := fixture.ExecContext(context.Background(), "DROP TABLE jobs"); err != nil {
+		_ = fixture.Close()
+		t.Fatalf("drop jobs: %v", err)
+	}
+	if err := fixture.Close(); err != nil {
+		t.Fatalf("close fixture: %v", err)
+	}
+
+	env := envOf(map[string]string{
+		"PUBLIC_URL":  "https://ops.example.test",
+		"LISTEN_ADDR": freeAddr(t),
+		"DATA_DIR":    dataDir,
+	})
+	// The deadline only bounds a run that wrongly starts serving.
+	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
+	defer cancel()
+	var stdout, stderr bytes.Buffer
+	if code := run(ctx, nil, env, &stdout, &stderr); code != 1 {
+		t.Fatalf("run() = %d, want 1 (stdout %q)", code, stdout.String())
+	}
+
+	lines := jsonLines(t, &stdout)
+	if _, ok := findLine(lines, "store opened"); !ok {
+		t.Fatalf("no %q line in stdout: %q (the altered schema must open)", "store opened", stdout.String())
+	}
+	l, ok := findLine(lines, "job recovery failed")
+	if !ok {
+		t.Fatalf("no %q line in stdout: %q", "job recovery failed", stdout.String())
+	}
+	if l["level"] != "ERROR" {
+		t.Errorf("job recovery failed level = %v, want ERROR", l["level"])
+	}
+	for _, msg := range []string{"listening", "store close failed"} {
+		if _, ok := findLine(lines, msg); ok {
+			t.Errorf("unexpected %q line in stdout: %q", msg, stdout.String())
+		}
+	}
+}
+
+// blockUntilDone returns nil when ctx ends.
+func blockUntilDone(ctx context.Context) error {
+	<-ctx.Done()
+	return nil
+}
+
+// runTogetherWithin calls runTogether with a background context and fails
+// the test if it does not return within waitTimeout.
+func runTogetherWithin(t *testing.T, server, scheduler func(context.Context) error) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- runTogether(context.Background(), server, scheduler) }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(waitTimeout):
+		t.Fatalf("runTogether did not return within %s", waitTimeout)
+		return nil
+	}
+}
+
+func TestRunTogetherServerErrorStopsScheduler(t *testing.T) {
+	t.Parallel()
+	serveErr := errors.New("serve")
+	err := runTogetherWithin(t,
+		func(context.Context) error { return serveErr },
+		blockUntilDone)
+	if !errors.Is(err, serveErr) || err.Error() != "serve" {
+		t.Errorf("runTogether() = %v, want %v", err, serveErr)
+	}
+}
+
+func TestRunTogetherSchedulerErrorStopsServer(t *testing.T) {
+	t.Parallel()
+	schedErr := errors.New("sched")
+	err := runTogetherWithin(t,
+		blockUntilDone,
+		func(context.Context) error { return schedErr })
+	if !errors.Is(err, schedErr) || err.Error() != "sched" {
+		t.Errorf("runTogether() = %v, want %v", err, schedErr)
+	}
+}
+
+func TestRunTogetherCtxCancel(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{}, 2)
+	block := func(ctx context.Context) error {
+		started <- struct{}{}
+		return blockUntilDone(ctx)
+	}
+	done := make(chan error, 1)
+	go func() { done <- runTogether(ctx, block, block) }()
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(waitTimeout):
+			t.Fatal("server and scheduler did not both start")
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("runTogether() = %v, want nil", err)
+		}
+	case <-time.After(waitTimeout):
+		t.Fatalf("runTogether did not return within %s after cancel", waitTimeout)
+	}
+}
+
+func TestRunTogetherJoinsBothErrors(t *testing.T) {
+	t.Parallel()
+	serveErr, schedErr := errors.New("serve"), errors.New("sched")
+	err := runTogetherWithin(t,
+		func(context.Context) error { return serveErr },
+		func(ctx context.Context) error {
+			<-ctx.Done()
+			return schedErr
+		})
+	if !errors.Is(err, serveErr) || !errors.Is(err, schedErr) {
+		t.Fatalf("runTogether() = %v, want both errors", err)
+	}
+	if got, want := err.Error(), "serve\nsched"; got != want {
+		t.Errorf("runTogether() text = %q, want %q (server first)", got, want)
 	}
 }

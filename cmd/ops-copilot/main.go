@@ -1,11 +1,13 @@
 // Command ops-copilot is the single Ops Copilot binary. With no argument it
 // loads its configuration from the environment, opens the SQLite store in
-// DATA_DIR and serves the public HTTP port until SIGINT or SIGTERM;
+// DATA_DIR, requeues the jobs a previous run left running, and serves the
+// public HTTP port beside the job scheduler until SIGINT or SIGTERM;
 // "ops-copilot version" prints its version.
 package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,7 +18,9 @@ import (
 
 	"github.com/daniel-vuky/ops-copilot/internal/platform/adapters/httpserver"
 	"github.com/daniel-vuky/ops-copilot/internal/platform/adapters/sqlite"
+	"github.com/daniel-vuky/ops-copilot/internal/platform/clock"
 	"github.com/daniel-vuky/ops-copilot/internal/platform/config"
+	"github.com/daniel-vuky/ops-copilot/internal/platform/jobs"
 	"github.com/daniel-vuky/ops-copilot/internal/platform/logging"
 )
 
@@ -52,9 +56,12 @@ func main() {
 // run is the whole program behind main, with its inputs and outputs passed
 // in for tests. It serves until ctx is done and returns the exit status: 0
 // after a clean shutdown or "version", 1 for a configuration error, a store
-// that fails to open (including a schema newer than this binary), a listen
-// error, a shutdown error or a store close error, 2 for a usage error. The
-// store is closed on every path after it opens.
+// that fails to open (including a schema newer than this binary), a job
+// recovery failure, a listen error, a server or shutdown error, a scheduler
+// error or a store close error, 2 for a usage error. The server and the
+// scheduler run side by side; when either stops, the other is stopped too.
+// The store is closed on every path after it opens, once both have
+// returned.
 func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) (code int) {
 	switch {
 	case len(args) == 1 && args[0] == "version":
@@ -93,6 +100,12 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	}()
 	logger.LogAttrs(ctx, slog.LevelInfo, "store opened", slog.String("path", db.Path()))
 
+	sched := jobs.New(sqlite.NewJobStore(db), db, jobs.Options{Clock: clock.System{}, Logger: logger})
+	if err := sched.Recover(ctx); err != nil {
+		logger.LogAttrs(ctx, slog.LevelError, "job recovery failed", slog.Any("error", err))
+		return exitError
+	}
+
 	var lc net.ListenConfig
 	ln, err := lc.Listen(ctx, "tcp", cfg.ListenAddr)
 	if err != nil {
@@ -105,10 +118,29 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	ready := &httpserver.Readiness{}
 	router := httpserver.NewRouter(logger, ready, nil)
 	srv := httpserver.NewServer(router, ready, logger)
-	if err := srv.Run(ctx, ln); err != nil {
+	serve := func(ctx context.Context) error { return srv.Run(ctx, ln) }
+	if err := runTogether(ctx, serve, sched.Run); err != nil {
 		logger.LogAttrs(ctx, slog.LevelError, "stopped", slog.Any("error", err))
 		return exitError
 	}
 	logger.LogAttrs(ctx, slog.LevelInfo, "stopped")
 	return exitOK
+}
+
+// runTogether runs server and scheduler until ctx ends or either returns.
+// When one returns, the other's context is cancelled; it waits for both and
+// returns their errors joined (server first).
+func runTogether(ctx context.Context, server, scheduler func(context.Context) error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	schedDone := make(chan error, 1)
+	go func() {
+		defer cancel()
+		schedDone <- scheduler(ctx)
+	}()
+
+	serverErr := server(ctx)
+	cancel()
+	return errors.Join(serverErr, <-schedDone)
 }

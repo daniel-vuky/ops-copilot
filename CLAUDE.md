@@ -136,7 +136,7 @@ Include the final review's four sections in the PR body.
 - One Go module, one binary in `cmd/ops-copilot`, one container. Ports and adapters: domain logic in `internal/<domain>/`, technology in `internal/<domain>/adapters/<tech>/`. Domain code never imports adapters or vendor SDKs.
 - SQLite via `modernc.org/sqlite` (no CGO), WAL mode, embedded SQL migrations applied at start. Uploaded files live on the same volume.
 - One SQLite writer connection, `busy_timeout` 5 s, writes in `BEGIN IMMEDIATE`; backups and pre-migration snapshots with `VACUUM INTO`.
-- Jobs run on an in-process scheduler backed by a job table (CVE scans, extraction, retention, backups, notifications, investigations: 2 running and 20 waiting by default). At start, jobs left `running` are requeued; at most 3 attempts.
+- Jobs run on an in-process scheduler backed by a job table (CVE scans, extraction, retention, backups, notifications, investigations: 2 running and 20 waiting by default). At start, jobs left `running` are requeued; 3 attempts by default, and a kind may set its own (ADR 0006 §4).
 - Document extraction runs in a child process (`ops-copilot extract`) with a 60 s timeout and a 512 MB memory limit.
 - Plain HTTP on one public port: `/api/*` (JSON), `/mcp`, `/oauth/*`, `/.well-known/*`, `/hooks/*`, `/healthz`, and the SPA for everything else. TLS belongs to the proxy in front; `PUBLIC_URL` is the external origin.
 - The React + TypeScript + Vite SPA is embedded with `go:embed`. React Router and TanStack Query, hand-written API types, no UI kit.
