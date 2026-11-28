@@ -4,10 +4,15 @@ import reactHooks from "eslint-plugin-react-hooks";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 
+// Text from alerts, tools and reports is rendered as text, never as HTML
+// (ADR 0002 §6), and the CSP allows no inline styles.
+const renderTextAsText = "Render text as text (ADR 0002 §6)";
+const noInlineStyles = "Use a class from app.css; no inline styles (CSP)";
+
 export default defineConfig([
   globalIgnores(["dist"]),
   {
-    files: ["**/*.{js,ts,tsx}"],
+    files: ["**/*.{js,mjs,ts,tsx}"],
     extends: [js.configs.recommended],
     languageOptions: {
       ecmaVersion: 2022,
@@ -15,8 +20,45 @@ export default defineConfig([
     },
   },
   {
+    files: ["scripts/**/*.mjs"],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
+  {
     files: ["**/*.{ts,tsx}"],
     extends: [tseslint.configs.recommended],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "JSXAttribute[name.name='dangerouslySetInnerHTML']",
+          message: renderTextAsText,
+        },
+        {
+          selector: "Property[key.name='dangerouslySetInnerHTML']",
+          message: renderTextAsText,
+        },
+        {
+          selector: "Property[key.value='dangerouslySetInnerHTML']",
+          message: renderTextAsText,
+        },
+        {
+          selector: "JSXAttribute[name.name='style']",
+          message: noInlineStyles,
+        },
+        {
+          selector:
+            "AssignmentExpression > MemberExpression.left[property.name=/^(innerHTML|outerHTML)$/]",
+          message: renderTextAsText,
+        },
+        {
+          selector:
+            "CallExpression > MemberExpression.callee[property.name='insertAdjacentHTML']",
+          message: renderTextAsText,
+        },
+      ],
+    },
   },
   {
     files: ["**/*.tsx"],
