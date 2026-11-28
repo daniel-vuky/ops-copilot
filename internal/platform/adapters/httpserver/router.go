@@ -31,7 +31,8 @@ type Router struct {
 
 // NewRouter builds the route table. logger is the base logger (nil means
 // slog.Default()); ready drives /healthz (nil means never ready); ui serves
-// every path no other route claims (nil means a built-in placeholder page).
+// every path no other route claims (nil means SPAHandler(nil), the built-in
+// placeholder page).
 // The UI handler only answers GET and HEAD.
 func NewRouter(logger *slog.Logger, ready *Readiness, ui http.Handler) *Router {
 	if logger == nil {
@@ -41,7 +42,7 @@ func NewRouter(logger *slog.Logger, ready *Readiness, ui http.Handler) *Router {
 		ready = &Readiness{}
 	}
 	if ui == nil {
-		ui = placeholderUI()
+		ui = SPAHandler(nil)
 	}
 
 	mux := http.NewServeMux()
@@ -126,7 +127,7 @@ func uiOnlyGet(h http.Handler) http.Handler {
 	})
 }
 
-// placeholderHTML is served until the SPA is embedded (SU-07). It is a fixed
+// placeholderHTML is served when the binary carries no SPA build. It is a fixed
 // string with no inline script or style, so it works under
 // CSP default-src 'self'.
 const placeholderHTML = `<!doctype html>

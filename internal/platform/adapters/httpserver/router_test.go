@@ -232,23 +232,36 @@ func TestSecurityHeadersOnEveryResponse(t *testing.T) {
 	r.Handle("GET /api/panic", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("boom")
 	}))
+	// A UI path, so recoverPanic answers its text 500.
+	r.Handle("GET /ui-panic", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("boom")
+	}))
+	notReady, _ := newTestRouter(t, false, nil)
+	spa := newSPARouter()
 
 	tests := []struct {
 		name, method, target string
+		router               *Router
 		wantStatus           int
 	}{
-		{"placeholder UI", http.MethodGet, "/", http.StatusOK},
-		{"healthz", http.MethodGet, "/healthz", http.StatusOK},
-		{"JSON 404", http.MethodGet, "/api/x", http.StatusNotFound},
-		{"UI 405", http.MethodPost, "/", http.StatusMethodNotAllowed},
-		{"recovered panic", http.MethodGet, "/api/panic", http.StatusInternalServerError},
-		{"clean-path redirect", http.MethodGet, "/a/../b", http.StatusTemporaryRedirect},
+		{"placeholder UI", http.MethodGet, "/", r, http.StatusOK},
+		{"healthz", http.MethodGet, "/healthz", r, http.StatusOK},
+		{"healthz not ready", http.MethodGet, "/healthz", notReady, http.StatusServiceUnavailable},
+		{"JSON 404", http.MethodGet, "/api/x", r, http.StatusNotFound},
+		{"mcp JSON 404", http.MethodGet, "/mcp", r, http.StatusNotFound},
+		{"UI 405", http.MethodPost, "/", r, http.StatusMethodNotAllowed},
+		{"recovered panic", http.MethodGet, "/api/panic", r, http.StatusInternalServerError},
+		{"recovered UI panic", http.MethodGet, "/ui-panic", r, http.StatusInternalServerError},
+		{"clean-path redirect", http.MethodGet, "/a/../b", r, http.StatusTemporaryRedirect},
+		{"SPA deep link", http.MethodGet, "/investigations/1", spa, http.StatusOK},
+		{"SPA asset", http.MethodGet, "/assets/index-AbC123.js", spa, http.StatusOK},
+		{"SPA missing asset", http.MethodGet, "/assets/gone-1.js", spa, http.StatusNotFound},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			rec := serve(r, tt.method, tt.target, nil)
+			rec := serve(tt.router, tt.method, tt.target, nil)
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
 			}
