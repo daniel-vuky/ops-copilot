@@ -106,8 +106,9 @@ build-go: .toolchain-ready ## Build the static binary into bin/ops-copilot
 	$(RUN) go build -trimpath -ldflags "-s -w" -o bin/ops-copilot ./cmd/ops-copilot
 
 # Compiles the embedded web/dist into a test binary and serves it through the
-# router: index.html, every file it references and every font the CSS
-# references must answer 200 with the right Content-Type. Without
+# router: index.html, every file it references, every font the CSS
+# references and every other embedded file must answer 200 with the right
+# (never application/octet-stream) Content-Type. Without
 # OC_REQUIRE_UI=1 the test skips, so a plain go test passes before any
 # frontend build. The recipe keeps go test's exit status, then also fails
 # unless the -v output shows TestEmbeddedUI passed, so a renamed test, a

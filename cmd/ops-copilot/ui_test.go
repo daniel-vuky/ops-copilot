@@ -2,6 +2,7 @@ package main
 
 import (
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -33,7 +34,8 @@ var uiContentTypes = map[string]string{
 
 // TestEmbeddedUI checks the binary's embedded build end to end through the
 // router: index.html, every file it references and every font the CSS
-// references. It runs only with OC_REQUIRE_UI=1 (make verify-ui), after a
+// references, then every embedded file, which must sit at the root or under
+// assets/ and be served with a known Content-Type. It runs only with OC_REQUIRE_UI=1 (make verify-ui), after a
 // frontend build; a plain go test skips it.
 func TestEmbeddedUI(t *testing.T) {
 	if os.Getenv("OC_REQUIRE_UI") != "1" {
@@ -81,6 +83,51 @@ func TestEmbeddedUI(t *testing.T) {
 	if !mono {
 		t.Error("the CSS references no url(/assets/jetbrains-mono-…woff2)")
 	}
+
+	// Every embedded file must be served, and with a known type: a new asset
+	// type missing from the handler's content-type table would otherwise go
+	// out as application/octet-stream, which nosniff makes unusable.
+	walked := 0
+	err := fs.WalkDir(app, ".", func(name string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		walked++
+		if strings.Contains(name, "/") && !strings.HasPrefix(name, "assets/") {
+			t.Errorf("%s: not servable (only root files and assets/ are served)", name)
+			return nil
+		}
+		target := "/" + name
+		if name == "index.html" {
+			target = "/"
+		}
+		res := getUIAny(t, router, target)
+		if got := res.Header.Get("Content-Type"); got == "" || strings.HasPrefix(got, "application/octet-stream") {
+			t.Errorf("GET %s: Content-Type %q; add %q to the SPA content-type table", target, got, path.Ext(name))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk the embedded UI: %v", err)
+	}
+	if walked == 0 {
+		t.Fatal("the embedded UI holds no files")
+	}
+}
+
+// getUIAny GETs target through h, checks a 200 and returns the response.
+func getUIAny(t *testing.T, h http.Handler, target string) *http.Response {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	res := rec.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("GET %s: status %d, want 200", target, res.StatusCode)
+	}
+	return res
 }
 
 // getUI GETs target through h, checks a 200 with the wanted Content-Type and
