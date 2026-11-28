@@ -49,6 +49,10 @@ body { margin: 0; }
 .oc-topbar { font-family: var(--font-sans), system-ui, sans-serif; color: var(--oc-ink); }
 .oc-topbar-l { flex: 1 1 240px; min-width: 0; }
 .oc-crumb { margin: 0; }
+/* .topbar-r is a content-sized flex item, so .search's max-width: 100% would
+   not be bounded by the card; let the right group shrink to the line instead.
+   Wide screens keep the 340px search box. */
+.oc-topbar .topbar-r { min-width: 0; max-width: 100%; }
 
 /* ---------- Page placeholders ---------- */
 .oc-page .card-b { margin: 0; }

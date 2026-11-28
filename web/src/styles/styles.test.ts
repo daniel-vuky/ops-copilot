@@ -49,4 +49,13 @@ describe("styles", () => {
     const css = readFileSync(appCSS, "utf8");
     expect(css).toMatch(/\.oc-burger:hover\s*\{[^}]*color:\s*#FFFFFF/);
   });
+
+  it("app.css lets the Topbar search shrink inside the card", () => {
+    // .topbar-r is a content-sized flex item, so the 340px .search box would
+    // overflow the Topbar on narrow screens without a shrinkable right group.
+    const css = readFileSync(appCSS, "utf8");
+    expect(css).toMatch(
+      /\.oc-topbar \.topbar-r\s*\{[^}]*min-width:\s*0;[^}]*max-width:\s*100%;/,
+    );
+  });
 });
