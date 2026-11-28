@@ -27,7 +27,6 @@ func healthHandler(ready *Readiness) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		h := w.Header()
 		h.Set("Content-Type", "text/plain; charset=utf-8")
-		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Cache-Control", "no-store")
 		if !ready.Ready() {
 			w.WriteHeader(http.StatusServiceUnavailable)

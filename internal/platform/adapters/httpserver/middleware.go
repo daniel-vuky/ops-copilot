@@ -25,6 +25,9 @@ const (
 	// redactedHooksPath replaces every webhook path in the access log, since
 	// the webhook token is part of the path (ADR 0002).
 	redactedHooksPath = "/hooks/[redacted]"
+	// contentSecurityPolicy is the Content-Security-Policy of ADR 0002 §6,
+	// sent on every response.
+	contentSecurityPolicy = "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
 )
 
 // requestID gives each request a fresh random id, sets it on the response and
@@ -39,6 +42,23 @@ func requestID(base *slog.Logger, next http.Handler) http.Handler {
 		ctx := logging.WithLogger(r.Context(), base.With(slog.String("request_id", id)))
 		ctx = logging.WithRequestID(ctx, id)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// securityHeaders sets Content-Security-Policy (ADR 0002 §6),
+// X-Content-Type-Options: nosniff and Referrer-Policy: same-origin on the
+// response before next runs, so every response that passes through the chain
+// carries them: handler output, ServeMux redirects and 404s, and the 500 of
+// recoverPanic. Errors net/http writes before any handler runs (such as 400
+// for a malformed request or 431 for oversized headers) never reach the chain
+// and carry none of them.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", contentSecurityPolicy)
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "same-origin")
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -150,7 +170,8 @@ func recoverPanic(next http.Handler) http.Handler {
 				panic(http.ErrAbortHandler)
 			}
 			// Drop headers that described the content the handler meant to
-			// send, and keep the error out of caches.
+			// send, and keep the error out of caches. The security headers
+			// set by securityHeaders are left in place on purpose.
 			h := w.Header()
 			for _, k := range []string{"Content-Encoding", "Content-Length", "ETag", "Last-Modified"} {
 				h.Del(k)

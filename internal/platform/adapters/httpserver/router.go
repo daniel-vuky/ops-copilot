@@ -22,7 +22,8 @@ const (
 var machinePrefixes = []string{"/api/", "/mcp", "/oauth/", "/.well-known/", "/hooks/"}
 
 // Router is the http.Handler of the public port. It wraps an http.ServeMux in
-// the middleware chain: request id, access log, recover, then the mux.
+// the middleware chain: request id, security headers, access log, recover,
+// then the mux.
 type Router struct {
 	mux     *http.ServeMux
 	handler http.Handler
@@ -54,7 +55,7 @@ func NewRouter(logger *slog.Logger, ready *Readiness, ui http.Handler) *Router {
 
 	return &Router{
 		mux:     mux,
-		handler: requestID(logger, accessLog(recoverPanic(mux))),
+		handler: requestID(logger, securityHeaders(accessLog(recoverPanic(mux)))),
 	}
 }
 
@@ -108,7 +109,6 @@ func writeJSONError(w http.ResponseWriter, status int, code, message string) {
 	h := w.Header()
 	h.Del("Content-Length")
 	h.Set("Content-Type", "application/json; charset=utf-8")
-	h.Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
 }
@@ -143,17 +143,11 @@ const placeholderHTML = `<!doctype html>
 </html>
 `
 
-// placeholderCSP is the Content-Security-Policy of ADR 0002 §6.
-const placeholderCSP = "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
-
-// placeholderUI serves placeholderHTML for every UI path.
+// placeholderUI serves placeholderHTML for every UI path. The security
+// headers come from securityHeaders.
 func placeholderUI() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		h := w.Header()
-		h.Set("Content-Type", "text/html; charset=utf-8")
-		h.Set("X-Content-Type-Options", "nosniff")
-		// SU-07 moves security headers to a middleware for every page.
-		h.Set("Content-Security-Policy", placeholderCSP)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(placeholderHTML))
 	})
 }

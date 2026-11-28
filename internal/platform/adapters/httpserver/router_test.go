@@ -218,3 +218,50 @@ func TestCustomUIHandler(t *testing.T) {
 		})
 	}
 }
+
+func TestSecurityHeadersOnEveryResponse(t *testing.T) {
+	t.Parallel()
+
+	// ADR 0002 §6, verbatim: guards the constant against edits.
+	const wantCSP = "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+	if contentSecurityPolicy != wantCSP {
+		t.Fatalf("contentSecurityPolicy = %q, want %q", contentSecurityPolicy, wantCSP)
+	}
+
+	r, _ := newTestRouter(t, true, nil)
+	r.Handle("GET /api/panic", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("boom")
+	}))
+
+	tests := []struct {
+		name, method, target string
+		wantStatus           int
+	}{
+		{"placeholder UI", http.MethodGet, "/", http.StatusOK},
+		{"healthz", http.MethodGet, "/healthz", http.StatusOK},
+		{"JSON 404", http.MethodGet, "/api/x", http.StatusNotFound},
+		{"UI 405", http.MethodPost, "/", http.StatusMethodNotAllowed},
+		{"recovered panic", http.MethodGet, "/api/panic", http.StatusInternalServerError},
+		{"clean-path redirect", http.MethodGet, "/a/../b", http.StatusTemporaryRedirect},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := serve(r, tt.method, tt.target, nil)
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+			h := rec.Header()
+			if got := h.Get("Content-Security-Policy"); got != contentSecurityPolicy {
+				t.Errorf("Content-Security-Policy = %q, want %q", got, contentSecurityPolicy)
+			}
+			if got := h.Get("X-Content-Type-Options"); got != "nosniff" {
+				t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+			}
+			if got := h.Get("Referrer-Policy"); got != "same-origin" {
+				t.Errorf("Referrer-Policy = %q, want same-origin", got)
+			}
+		})
+	}
+}
